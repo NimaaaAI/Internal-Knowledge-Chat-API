@@ -126,4 +126,157 @@ This confirms vector storage, similarity search, and distance ordering all work.
 
 ---
 
+## Step 5 — Create the project folder structure
+
+```bash
+mkdir -p app/routes app/static
+touch app/__init__.py app/routes/__init__.py
+```
+
+- `app/routes/` — one file per endpoint group (upload, search, chat, documents)
+- `app/static/` — the frontend HTML file
+- `__init__.py` files tell Python to treat these folders as packages
+
+---
+
+## Step 6 — Environment variables
+
+```bash
+cp .env.example .env
+# Open .env and fill in your ANTHROPIC_API_KEY
+```
+
+Never commit `.env` — it is listed in `.gitignore`. The `.env.example` file shows the required keys without real values.
+
+---
+
+## Step 7 — Install Python dependencies
+
+Dependencies are added to `requirements.txt` as they are needed. Install everything at once with:
+
+```bash
+pip install -r requirements.txt
+```
+
+Current dependencies and why each is needed:
+
+| Package | Purpose |
+|---|---|
+| pydantic-settings | reads `.env` into typed Python settings |
+| sqlalchemy[asyncio] | async ORM for PostgreSQL |
+| asyncpg | async PostgreSQL driver used by SQLAlchemy |
+| pgvector | SQLAlchemy type for the `vector` column |
+
+---
+
+## Step 8 — Apply the database schema
+
+```bash
+psql -U postgres -d knowledge -f init.sql
+```
+
+Creates two tables:
+
+**`documents`** — one row per uploaded file or text block
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID | primary key |
+| title | TEXT | human-readable name |
+| source | TEXT | where it came from |
+| author | TEXT | who wrote it |
+| doc_type | TEXT | memo, report, article, etc. |
+| content_type | TEXT | `text` or `document` (PDF) |
+| extra_metadata | JSONB | any extra key-value pairs for filtering |
+| created_at | TIMESTAMPTZ | upload timestamp |
+
+**`chunks`** — one row per piece of text split from a document
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID | primary key |
+| document_id | UUID | foreign key → documents.id |
+| chunk_index | INTEGER | position within the document |
+| text | TEXT | the raw chunk text |
+| embedding | vector(384) | 384-dimension embedding vector |
+| ts_vector | TSVECTOR | auto-updated full-text search index |
+| created_at | TIMESTAMPTZ | creation timestamp |
+
+Indexes: HNSW (vector search), GIN (full-text search), B-tree (document lookup), GIN (JSONB metadata filtering).
+
+---
+
+## Step 9 — Core Python modules
+
+### `app/config.py`
+Reads all environment variables into a typed `Settings` object. Every other module imports from here — nothing is hardcoded.
+
+### `app/database.py`
+Creates the async SQLAlchemy engine and a `get_db` dependency that FastAPI injects into route handlers.
+
+### `app/models.py`
+SQLAlchemy ORM classes that map to the `documents` and `chunks` tables. Uses `pgvector.sqlalchemy.Vector` for the embedding column.
+
+### `app/schemas.py`
+Pydantic models that define the shape of every API request and response. Pydantic validates incoming data automatically.
+
+### `app/chunking.py`
+Splits a document into overlapping word-based chunks. 150 words per chunk, 30-word overlap. Word-based (not character-based) because it maps predictably to the embedding model's 256 wordpiece token limit.
+
+---
+
+## Step 5 — Create the project folder structure
+
+```bash
+mkdir -p app/routes app/static
+touch app/__init__.py app/routes/__init__.py
+```
+
+- `app/routes/` — one file per endpoint group (upload, search, chat, documents)
+- `app/static/` — the frontend HTML file
+- `__init__.py` files tell Python to treat these folders as packages
+
+---
+
+## Step 6 — Apply the database schema
+
+```bash
+psql -U postgres -d knowledge -f init.sql
+```
+
+This creates two tables:
+
+**`documents`** — one row per uploaded file or text block
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID | primary key |
+| title | TEXT | human-readable name |
+| source | TEXT | where it came from (URL, filename, etc.) |
+| author | TEXT | who wrote it |
+| doc_type | TEXT | memo, report, article, etc. |
+| content_type | TEXT | 'text' or 'document' (PDF) |
+| extra_metadata | JSONB | any extra key-value pairs for filtering |
+| created_at | TIMESTAMPTZ | when it was uploaded |
+
+**`chunks`** — one row per chunk of text split from a document
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID | primary key |
+| document_id | UUID | foreign key → documents.id |
+| chunk_index | INTEGER | position within the document |
+| text | TEXT | the raw chunk text |
+| embedding | vector(384) | the 384-dimension embedding vector |
+| ts_vector | TSVECTOR | auto-updated full-text search index |
+| created_at | TIMESTAMPTZ | when it was created |
+
+**Indexes created:**
+- `HNSW` on `chunks.embedding` — fast approximate nearest-neighbour vector search
+- `GIN` on `chunks.ts_vector` — fast full-text keyword search
+- B-tree on `chunks.document_id` — fast lookup of all chunks for a document
+- `GIN` on `documents.extra_metadata` — fast JSONB key-value filtering
+
+**Trigger:** `sync_chunk_ts_vector` — automatically populates `ts_vector` from `text` on every insert or update, so full-text search is always up to date.
+
+---
+
 

@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.embeddings import get_model
-from app.routes import upload, search, chat
+from app.routes import upload, search, chat, documents
 
 
 @asynccontextmanager
@@ -23,5 +23,6 @@ app = FastAPI(
 app.include_router(upload.router, tags=["Upload"])
 app.include_router(search.router, tags=["Search"])
 app.include_router(chat.router, tags=["Chat"])
+app.include_router(documents.router, tags=["Documents"])
 
 app.mount("/", StaticFiles(directory="app/static", html=True), name="static")

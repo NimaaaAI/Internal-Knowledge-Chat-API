@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.embeddings import get_model
+from app.routes import upload
 
 
 @asynccontextmanager
@@ -18,5 +19,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+app.include_router(upload.router, tags=["Upload"])
 
 app.mount("/", StaticFiles(directory="app/static", html=True), name="static")

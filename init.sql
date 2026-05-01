@@ -49,3 +49,7 @@ CREATE INDEX IF NOT EXISTS chunks_document_id_idx
 -- GIN index on extra_metadata for fast key-value filtering
 CREATE INDEX IF NOT EXISTS documents_metadata_idx
     ON documents USING GIN (extra_metadata);
+
+-- Grant the app user full access to all tables and sequences
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO rag;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO rag;

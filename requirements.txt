@@ -7,3 +7,4 @@ pymupdf==1.27.2.3
 fastapi==0.136.1
 uvicorn[standard]==0.46.0
 python-multipart==0.0.27
+anthropic==0.97.0

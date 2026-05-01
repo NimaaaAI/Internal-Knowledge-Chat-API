@@ -9,6 +9,7 @@ from app.auth import verify_api_key
 from app.database import get_db
 from app.embeddings import embed_one
 from app.schemas import SearchResponse, ChunkResult
+from app.reranker import rerank_chunks
 from app.config import settings
 
 router = APIRouter(dependencies=[Depends(verify_api_key)])
@@ -90,6 +91,8 @@ async def hybrid_search(
         rrf AS (
             SELECT
                 COALESCE(v.id, f.id) AS id,
+                v.rank               AS vector_rank,
+                f.rank               AS fts_rank,
                 (COALESCE(1.0 / (60 + v.rank), 0) +
                  COALESCE(1.0 / (60 + f.rank), 0)) AS score
             FROM vector_ranked v
@@ -101,6 +104,8 @@ async def hybrid_search(
             c.chunk_index,
             c.text,
             rrf.score,
+            rrf.vector_rank,
+            rrf.fts_rank,
             d.title         AS document_title,
             d.source        AS document_source,
             d.author        AS document_author,
@@ -127,6 +132,8 @@ async def hybrid_search(
             document_author=row["document_author"],
             doc_type=row["doc_type"],
             extra_metadata=row["extra_metadata"] or {},
+            vector_rank=row["vector_rank"],
+            fts_rank=row["fts_rank"],
         )
         for row in rows
     ]
@@ -139,9 +146,17 @@ async def search(
     doc_type: str | None = Query(default=None),
     author: str | None = Query(default=None),
     source: str | None = Query(default=None),
+    rerank: bool = Query(default=False, description="Apply cross-encoder re-ranking after hybrid search"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Hybrid vector + full-text search with optional metadata filters."""
-    k = top_k or settings.search_top_k
-    results = await hybrid_search(db, q, k, doc_type=doc_type, author=author, source=source)
+    """Hybrid vector + full-text search with optional metadata filters and re-ranking."""
+    if rerank:
+        candidates = top_k or settings.rerank_candidates
+        results = await hybrid_search(db, q, candidates, doc_type=doc_type, author=author, source=source)
+        final_k = top_k or settings.rerank_top_k
+        if len(results) > 1:
+            results = await asyncio.to_thread(rerank_chunks, q, results, final_k)
+    else:
+        k = top_k or settings.search_top_k
+        results = await hybrid_search(db, q, k, doc_type=doc_type, author=author, source=source)
     return SearchResponse(query=q, results=results)

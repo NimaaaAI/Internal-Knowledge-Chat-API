@@ -1,44 +1,34 @@
+import asyncio
 import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-import anthropic
 
 from app.auth import verify_api_key
 from app.database import get_db
+from app.llm import client as _client, SYSTEM_PROMPT, build_context as _build_context
 from app.schemas import ChatRequest, ChatResponse, SourceReference
 from app.routes.search import hybrid_search
+from app.reranker import rerank_chunks
 from app.config import settings
 
 router = APIRouter(dependencies=[Depends(verify_api_key)])
 
-_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-
-SYSTEM_PROMPT = """\
-You are a knowledgeable assistant with access to an internal document library.
-Answer the user's question using ONLY the provided context passages.
-If the context does not contain enough information, say so clearly — do not invent facts.
-When you use information from a passage, note it inline as [Doc: <title>, chunk <index>].
-Be concise and precise."""
-
-
-def _build_context(chunks) -> str:
-    parts = []
-    for c in chunks:
-        parts.append(f"[Doc: {c.document_title}, chunk {c.chunk_index}]\n{c.text}")
-    return "\n\n---\n\n".join(parts)
-
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db)):
+    candidate_k = settings.rerank_candidates if settings.rerank_enabled else settings.search_top_k
     chunks = await hybrid_search(
         db,
         payload.question,
-        top_k=settings.search_top_k,
+        top_k=candidate_k,
         doc_type=payload.doc_type,
         author=payload.author,
         source=payload.source,
     )
+
+    if settings.rerank_enabled and len(chunks) > 1:
+        chunks = await asyncio.to_thread(rerank_chunks, payload.question, chunks, settings.rerank_top_k)
 
     if not chunks:
         raise HTTPException(

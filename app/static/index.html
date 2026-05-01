@@ -53,6 +53,58 @@
   .bubble.assistant { background: #eee; }
   .sources-block { margin-top: 10px; font-size: 0.78rem; color: #555; }
   .sources-block details summary { cursor: pointer; font-weight: 600; }
+  .thinking { color: #aaa; font-style: italic; }
+  .thinking::after { content: ''; animation: thinking-dots 1.2s steps(4, end) infinite; }
+  @keyframes thinking-dots { 0%{content:'.'} 33%{content:'..'} 66%{content:'...'} 100%{content:''} }
+  /* Internals */
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 4px; }
+  .stat-box { background: #f0f4ff; border-radius: 8px; padding: 16px 20px; text-align: center; }
+  .stat-number { font-size: 2rem; font-weight: 700; color: #1a1a1a; }
+  .stat-label { font-size: 0.78rem; color: #666; margin-top: 4px; }
+  .chunk-item { padding: 12px 0; border-bottom: 1px solid #f0f0f0; }
+  .chunk-item:last-child { border-bottom: none; }
+  .chunk-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .chunk-idx { background: #1a1a1a; color: white; padding: 2px 9px; border-radius: 10px; font-size: 0.75rem; white-space: nowrap; }
+  .chunk-meta { font-size: 0.75rem; color: #888; }
+  .chunk-text { font-size: 0.85rem; color: #444; line-height: 1.5; }
+  .trace-item { padding: 14px 0; border-bottom: 1px solid #f0f0f0; }
+  .trace-item:last-child { border-bottom: none; }
+  .trace-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .trace-rank { font-size: 0.75rem; font-weight: 700; color: #888; min-width: 22px; }
+  .trace-score { margin-left: auto; font-size: 0.75rem; color: #888; font-family: monospace; }
+  .trace-ranks { font-size: 0.8rem; color: #666; margin-bottom: 6px; }
+  .trace-text { font-size: 0.85rem; color: #444; line-height: 1.5; }
+  .search-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; }
+  .search-badge.both { background: #d5f5e3; color: #1e8449; }
+  .search-badge.vec  { background: #d6eaf8; color: #1a5276; }
+  .search-badge.fts  { background: #fdebd0; color: #a04000; }
+  /* Pipeline inspector */
+  .pipe-step { border-left: 3px solid #ddd; padding: 14px 18px; margin-bottom: 10px; border-radius: 0 8px 8px 0; background: #fafafa; transition: border-color .3s; }
+  .pipe-step.running { border-left-color: #f39c12; background: #fffdf5; }
+  .pipe-step.done    { border-left-color: #27ae60; background: #f9fff9; }
+  .pipe-step.error   { border-left-color: #c0392b; background: #fff9f9; }
+  .pipe-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .pipe-num { background: #1a1a1a; color: white; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 700; flex-shrink: 0; }
+  .pipe-title { font-weight: 600; font-size: 0.9rem; }
+  .pipe-badge { margin-left: auto; font-size: 0.8rem; font-weight: 600; }
+  .pipe-badge.running { color: #f39c12; }
+  .pipe-badge.done    { color: #27ae60; }
+  .pipe-badge.error   { color: #c0392b; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .pipe-step.running .pipe-badge { animation: pulse .9s ease-in-out infinite; }
+  .pipe-stat { font-size: 0.85rem; color: #444; margin-bottom: 8px; }
+  .pipe-detail { font-size: 0.9rem; font-style: italic; color: #333; margin-bottom: 4px; }
+  .pipe-filter { font-size: 0.78rem; color: #888; }
+  .pipe-chunks { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .pipe-chunk { padding: 8px 10px; background: white; border: 1px solid #eee; border-radius: 6px; font-size: 0.82rem; }
+  .pipe-chunk-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 3px; }
+  .pipe-chunk-text { color: #777; font-size: 0.79rem; line-height: 1.4; }
+  .moved-up   { color: #1e8449; font-weight: 700; }
+  .moved-down { color: #c0392b; font-weight: 700; }
+  .moved-same { color: #999; }
+  .pipe-answer { font-size: 0.88rem; line-height: 1.7; white-space: pre-wrap; }
+  .pipe-sources { margin-top: 10px; font-size: 0.78rem; color: #666; }
+  pre.pipe-ctx { font-size: 0.75rem; white-space: pre-wrap; color: #555; max-height: 180px; overflow-y: auto; background: #f5f5f5; padding: 10px; border-radius: 6px; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -64,6 +116,7 @@
   <div class="tab" onclick="show('documents')">Documents</div>
   <div class="tab" onclick="show('search')">Search</div>
   <div class="tab" onclick="show('chat')">Chat</div>
+  <div class="tab" onclick="show('internals')">Internals</div>
 </div>
 
 <!-- ── UPLOAD ──────────────────────────────────────────── -->
@@ -123,6 +176,9 @@
       <div><label>Filter: doc type</label><input id="search-doctype" type="text"></div>
       <div><label>Filter: author</label><input id="search-author" type="text"></div>
     </div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-weight:normal">
+      <input type="checkbox" id="search-rerank"> Re-rank results with cross-encoder
+    </label>
     <button onclick="doSearch()">Search</button>
   </div>
   <div id="search-results"></div>
@@ -146,6 +202,66 @@
   </div>
 </div>
 
+<!-- ── INTERNALS ─────────────────────────────────────────── -->
+<div id="page-internals" class="page">
+  <h2>Internals</h2>
+
+  <!-- Stats -->
+  <div class="card">
+    <h3 style="margin-bottom:16px;font-size:1rem">Database Stats</h3>
+    <div class="stats-grid">
+      <div class="stat-box">
+        <div class="stat-number" id="int-doc-count">—</div>
+        <div class="stat-label">Documents</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-number" id="int-chunk-count">—</div>
+        <div class="stat-label">Chunks</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chunk browser -->
+  <div class="card">
+    <h3 style="margin-bottom:16px;font-size:1rem">Chunk Browser</h3>
+    <label>Document</label>
+    <select id="int-doc-select" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:0.9rem;background:#fafafa">
+      <option value="">Loading documents…</option>
+    </select>
+    <button onclick="viewChunks()">View Chunks</button>
+    <div id="int-chunks" style="margin-top:14px"></div>
+  </div>
+
+  <!-- Retrieval trace -->
+  <div class="card">
+    <h3 style="margin-bottom:16px;font-size:1rem">Retrieval Trace</h3>
+    <p style="font-size:0.82rem;color:#666;margin-bottom:14px">Run hybrid search and see exactly how each chunk was found — vector rank, full-text rank, and final RRF score.</p>
+    <label>Query</label>
+    <input id="int-trace-q" type="text" placeholder="e.g. Nordic expansion strategy">
+    <div class="row">
+      <div><label>Filter: doc type</label><input id="int-trace-doctype" type="text"></div>
+      <div><label>Top K results</label><input id="int-trace-topk" type="number" value="8" min="1" max="50"></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-weight:normal">
+      <input type="checkbox" id="int-trace-rerank"> Include cross-encoder re-ranking scores
+    </label>
+    <button onclick="runTrace()">Trace Retrieval</button>
+    <div id="int-trace-results" style="margin-top:14px"></div>
+  </div>
+
+  <!-- Pipeline Inspector -->
+  <div class="card">
+    <h3 style="margin-bottom:8px;font-size:1rem">Pipeline Inspector</h3>
+    <p style="font-size:0.82rem;color:#666;margin-bottom:16px">Watch every step of the RAG pipeline run live — retrieval, re-ranking, context assembly, and LLM generation.</p>
+    <label>Question</label>
+    <input id="pipe-q" type="text" placeholder="e.g. What is the Nordic expansion strategy?" onkeydown="if(event.key==='Enter')runPipeline()">
+    <label style="margin-top:12px">Filter: doc type (optional)</label>
+    <input id="pipe-doctype" type="text">
+    <button onclick="runPipeline()" style="margin-top:14px">Run Pipeline</button>
+    <div id="pipe-steps" style="margin-top:20px"></div>
+  </div>
+</div>
+
 <script>
 function show(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -153,6 +269,7 @@ function show(page) {
   document.getElementById('page-' + page).classList.add('active');
   event.target.classList.add('active');
   if (page === 'documents') loadDocuments();
+  if (page === 'internals') loadInternals();
 }
 
 function msg(id, text, ok) {
@@ -237,53 +354,358 @@ async function doSearch() {
   if (dt) params.append('doc_type', dt);
   if (au) params.append('author', au);
 
+  if (document.getElementById('search-rerank').checked) params.append('rerank', 'true');
   const data = await (await fetch('/search?' + params)).json();
   const el = document.getElementById('search-results');
   if (!data.results.length) { el.innerHTML = '<div class="card"><em>No results.</em></div>'; return; }
-  el.innerHTML = '<div class="card">' + data.results.map(r => `
+  el.innerHTML = '<div class="card">' + data.results.map(r => {
+    const hasVec = r.vector_rank != null, hasFts = r.fts_rank != null;
+    const badge = (hasVec && hasFts) ? `<span class="search-badge both">VEC + FTS</span>`
+                : hasVec             ? `<span class="search-badge vec">VEC only</span>`
+                : hasFts             ? `<span class="search-badge fts">FTS only</span>` : '';
+    return `
     <div class="result-item">
-      <div><strong>${r.document_title}</strong> — chunk ${r.chunk_index}
-        <span class="result-score">score: ${r.score.toFixed(4)}</span>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <strong>${r.document_title}</strong> — chunk ${r.chunk_index}
+        ${badge}
+        <span class="result-score" style="margin-left:auto">score: ${r.score.toFixed(4)}</span>
       </div>
       <div class="result-text">${r.text}</div>
-    </div>`).join('') + '</div>';
+    </div>`;
+  }).join('') + '</div>';
+}
+
+// ── Internals ──
+async function loadInternals() {
+  try {
+    const stats = await (await fetch('/debug/stats')).json();
+    document.getElementById('int-doc-count').textContent = stats.document_count;
+    document.getElementById('int-chunk-count').textContent = stats.chunk_count;
+  } catch(e) {
+    document.getElementById('int-doc-count').textContent = '?';
+    document.getElementById('int-chunk-count').textContent = '?';
+  }
+  const docs = await (await fetch('/documents')).json();
+  const sel = document.getElementById('int-doc-select');
+  if (!docs.length) {
+    sel.innerHTML = '<option value="">No documents yet</option>';
+    return;
+  }
+  sel.innerHTML = '<option value="">Select a document…</option>' +
+    docs.map(d => `<option value="${d.id}">${d.title} (${d.chunk_count} chunk${d.chunk_count !== 1 ? 's' : ''})</option>`).join('');
+}
+
+async function viewChunks() {
+  const docId = document.getElementById('int-doc-select').value;
+  if (!docId) return;
+  const el = document.getElementById('int-chunks');
+  el.innerHTML = '<em style="color:#888">Loading chunks…</em>';
+  try {
+    const chunks = await (await fetch(`/debug/chunks?document_id=${docId}`)).json();
+    if (!chunks.length) { el.innerHTML = '<em>No chunks found.</em>'; return; }
+    el.innerHTML = chunks.map(c => `
+      <div class="chunk-item">
+        <div class="chunk-header">
+          <span class="chunk-idx">Chunk #${c.chunk_index}</span>
+          <span class="chunk-meta">${c.embedding_dims}-dim embedding · ${c.text.split(/\s+/).length} words</span>
+        </div>
+        <div class="chunk-text">${c.text}</div>
+      </div>`).join('');
+  } catch(e) { el.innerHTML = `<em style="color:#c0392b">${e.message}</em>`; }
+}
+
+async function runTrace() {
+  const q = document.getElementById('int-trace-q').value.trim();
+  if (!q) return;
+  const dt = document.getElementById('int-trace-doctype').value;
+  const topK = document.getElementById('int-trace-topk').value || '8';
+  const doRerank = document.getElementById('int-trace-rerank').checked;
+  const params = new URLSearchParams({ q, top_k: topK });
+  if (dt) params.append('doc_type', dt);
+  if (doRerank) params.append('rerank', 'true');
+  const el = document.getElementById('int-trace-results');
+  el.innerHTML = '<em style="color:#888">Running retrieval…</em>';
+  try {
+    const data = await (await fetch(`/debug/trace?${params}`)).json();
+    if (!data.results || !data.results.length) { el.innerHTML = '<em>No results found.</em>'; return; }
+    el.innerHTML = data.results.map((r, i) => {
+      const hasVec = r.vector_rank !== null;
+      const hasFts = r.fts_rank !== null;
+      let badge, cls;
+      if (hasVec && hasFts) { badge = 'VEC + FTS'; cls = 'both'; }
+      else if (hasVec)       { badge = 'VEC only';  cls = 'vec'; }
+      else                   { badge = 'FTS only';  cls = 'fts'; }
+      const preview = r.text.length > 220 ? r.text.slice(0, 220) + '…' : r.text;
+      return `
+        <div class="trace-item">
+          <div class="trace-header">
+            <span class="trace-rank">#${i+1}</span>
+            <strong>${r.document_title}</strong> — chunk ${r.chunk_index}
+            <span class="search-badge ${cls}">${badge}</span>
+            <span class="trace-score">RRF: ${r.rrf_score.toFixed(5)}</span>
+          </div>
+          <div class="trace-ranks">
+            ${hasVec ? `Vector rank: <strong>${r.vector_rank}</strong>` : '<span style="color:#bbb">not in vector results</span>'}
+            &nbsp;·&nbsp;
+            ${hasFts ? `FTS rank: <strong>${r.fts_rank}</strong>` : '<span style="color:#bbb">not in FTS results</span>'}
+            ${r.rerank_score !== null && r.rerank_score !== undefined ? `&nbsp;·&nbsp;<span style="color:#1e8449">Re-rank score: <strong>${r.rerank_score.toFixed(4)}</strong></span>` : ''}
+          </div>
+          <div class="trace-text">${preview}</div>
+        </div>`;
+    }).join('');
+  } catch(e) { el.innerHTML = `<em style="color:#c0392b">${e.message}</em>`; }
+}
+
+// ── Pipeline Inspector ──
+let _pipelineSource = null;
+
+function runPipeline() {
+  const q = document.getElementById('pipe-q').value.trim();
+  if (!q) return;
+  const dt = document.getElementById('pipe-doctype').value;
+
+  // Close any previous stream
+  if (_pipelineSource) { _pipelineSource.close(); _pipelineSource = null; }
+
+  const stepsEl = document.getElementById('pipe-steps');
+  stepsEl.innerHTML = '';
+
+  const params = new URLSearchParams({ q });
+  if (dt) params.append('doc_type', dt);
+
+  _pipelineSource = new EventSource(`/debug/pipeline?${params}`);
+  _pipelineSource.onmessage = function(e) {
+    if (e.data === '[DONE]') { _pipelineSource.close(); _pipelineSource = null; return; }
+    try { _handlePipelineEvent(JSON.parse(e.data), stepsEl); } catch(_) {}
+  };
+  _pipelineSource.onerror = function() { _pipelineSource.close(); _pipelineSource = null; };
+}
+
+function _appendStep(container, id, num, title, statusCls, bodyHtml) {
+  const div = document.createElement('div');
+  div.id = id;
+  div.className = `pipe-step ${statusCls}`;
+  div.innerHTML = `
+    <div class="pipe-header">
+      <div class="pipe-num">${num}</div>
+      <span class="pipe-title">${title}</span>
+      <span class="pipe-badge ${statusCls}">${statusCls === 'running' ? '● Running' : statusCls === 'done' ? '✓ Done' : '✗ Error'}</span>
+    </div>
+    <div class="pipe-body">${bodyHtml}</div>`;
+  container.appendChild(div);
+  div.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function _updateStep(id, statusCls, bodyHtml) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = `pipe-step ${statusCls}`;
+  el.querySelector('.pipe-badge').className = `pipe-badge ${statusCls}`;
+  el.querySelector('.pipe-badge').textContent = statusCls === 'done' ? '✓ Done' : '✗ Error';
+  el.querySelector('.pipe-body').innerHTML = bodyHtml;
+}
+
+function _sourceBadge(c) {
+  const hasVec = c.vector_rank != null;
+  const hasFts = c.fts_rank != null;
+  if (hasVec && hasFts) return `<span class="search-badge both">VEC + FTS</span>`;
+  if (hasVec)           return `<span class="search-badge vec">VEC only</span>`;
+  if (hasFts)           return `<span class="search-badge fts">FTS only</span>`;
+  return '';
+}
+
+function _chunkRows(chunks, showRrf) {
+  return chunks.map((c, i) => `
+    <div class="pipe-chunk">
+      <div class="pipe-chunk-row">
+        <span class="trace-rank">#${i+1}</span>
+        <strong>${c.document_title}</strong> — chunk ${c.chunk_index}
+        ${_sourceBadge(c)}
+        ${showRrf ? `<span class="trace-score" style="margin-left:auto">RRF: ${c.rrf_score}</span>` : ''}
+      </div>
+      <div class="pipe-chunk-text">${c.text_preview}</div>
+    </div>`).join('');
+}
+
+function _rerankedRows(chunks) {
+  return chunks.map(c => {
+    const m = c.moved;
+    const arrow = m > 0
+      ? `<span class="moved-up">▲${m}</span>`
+      : m < 0 ? `<span class="moved-down">▼${Math.abs(m)}</span>`
+      : `<span class="moved-same">─</span>`;
+    return `
+      <div class="pipe-chunk">
+        <div class="pipe-chunk-row">
+          <span class="trace-rank">#${c.new_rank}</span>
+          ${arrow}
+          <strong>${c.document_title}</strong> — chunk ${c.chunk_index}
+          <span class="trace-score" style="margin-left:auto">CE: ${c.rerank_score}</span>
+        </div>
+        <div class="pipe-chunk-text">(was #${c.original_rank} by RRF) &nbsp; ${c.text_preview}</div>
+      </div>`;
+  }).join('');
+}
+
+function _handlePipelineEvent(msg, container) {
+  const { step, status, data } = msg;
+
+  if (step === 'query') {
+    const filters = [data.filters.doc_type ? `doc_type = ${data.filters.doc_type}` : '', data.filters.author ? `author = ${data.filters.author}` : ''].filter(Boolean).join(', ');
+    _appendStep(container, 'pipe-step-query', '1', 'Query', 'done',
+      `<div class="pipe-detail">"${data.question}"</div>${filters ? `<div class="pipe-filter">Filters: ${filters}</div>` : ''}`);
+    return;
+  }
+
+  if (step === 'hybrid_search') {
+    if (status === 'running') {
+      _appendStep(container, 'pipe-step-hs', '2', 'Hybrid Search (VEC + FTS + RRF)', 'running',
+        '<span style="color:#888;font-size:.85rem">Embedding query · searching vector index · running full-text search · merging with RRF…</span>');
+    } else {
+      _updateStep('pipe-step-hs', 'done',
+        `<div class="pipe-stat">Found <strong>${data.total_candidates}</strong> candidates &nbsp;·&nbsp; <strong>${data.duration_ms} ms</strong></div>
+         <div class="pipe-chunks">${_chunkRows(data.top_chunks, true)}</div>`);
+    }
+    return;
+  }
+
+  if (step === 'reranking') {
+    if (status === 'running') {
+      _appendStep(container, 'pipe-step-rr', '3', 'Cross-Encoder Re-ranking', 'running',
+        '<span style="color:#888;font-size:.85rem">Scoring each (query, chunk) pair together — more precise than vector distance alone…</span>');
+    } else {
+      _updateStep('pipe-step-rr', 'done',
+        `<div class="pipe-stat">Re-scored in <strong>${data.duration_ms} ms</strong> &nbsp;·&nbsp; kept top ${data.top_chunks.length} &nbsp;·&nbsp; ▲▼ shows rank change vs RRF order</div>
+         <div class="pipe-chunks">${_rerankedRows(data.top_chunks)}</div>`);
+    }
+    return;
+  }
+
+  if (step === 'context') {
+    _appendStep(container, 'pipe-step-ctx', '4', 'Context Assembly', 'done',
+      `<div class="pipe-stat"><strong>${data.chunk_count}</strong> chunks assembled &nbsp;·&nbsp; <strong>${data.word_count}</strong> words sent to LLM</div>
+       <details><summary style="cursor:pointer;font-size:0.8rem;color:#666;margin-top:6px">Show exact context sent to Claude</summary>
+         <pre class="pipe-ctx">${data.context_preview.replace(/</g,'&lt;')}</pre>
+       </details>`);
+    return;
+  }
+
+  if (step === 'llm' && status === 'running') {
+    _appendStep(container, 'pipe-step-llm', '5', 'LLM Answer Generation', 'running',
+      '<div class="pipe-answer" id="pipe-stream-target"></div>');
+    return;
+  }
+
+  if (step === 'llm_token') {
+    const el = document.getElementById('pipe-stream-target');
+    if (el) el.textContent += data.token;
+    return;
+  }
+
+  if (step === 'done') {
+    _updateStep('pipe-step-llm', 'done',
+      `<div class="pipe-answer">${data.answer.replace(/\n/g,'<br>').replace(/</g,'&lt;')}</div>
+       <div class="pipe-sources">Sources: ${data.sources.map(s => `<strong>${s.document_title}</strong> chunk ${s.chunk_index}`).join(' · ')}</div>`);
+    return;
+  }
+
+  if (step === 'error') {
+    _appendStep(container, 'pipe-step-err', '!', 'Error', 'error',
+      `<span style="color:#c0392b">${data.message}</span>`);
+  }
 }
 
 // ── Chat ──
 async function sendChat() {
   const q = document.getElementById('chat-input').value.trim();
   if (!q) return;
-  document.getElementById('chat-input').value = '';
+
+  const input = document.getElementById('chat-input');
+  const sendBtn = document.querySelector('#page-chat button');
+  input.value = '';
+  input.disabled = true;
+  sendBtn.disabled = true;
 
   const box = document.getElementById('chat-box');
   box.innerHTML += `<div class="bubble user">${q}</div>`;
+
+  const bubbleId = 'bubble-' + Date.now();
+  box.innerHTML += `<div class="bubble assistant" id="${bubbleId}"><span class="thinking">Searching knowledge base</span></div>`;
   box.scrollTop = box.scrollHeight;
 
   const body = {
     question: q,
     doc_type: document.getElementById('chat-doctype').value || null,
     author: document.getElementById('chat-author').value || null,
-    stream: false,
+    stream: true,
   };
 
   try {
-    const r = await fetch('/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-    const d = await r.json();
-    if (r.ok) {
-      const sourcesHtml = d.sources.length ? `
-        <div class="sources-block">
-          <details><summary>Sources (${d.sources.length})</summary>
-            ${d.sources.map(s => `<div style="margin-top:6px"><strong>${s.document_title}</strong>, chunk ${s.chunk_index}<br><span style="color:#777">${s.text.slice(0,120)}…</span></div>`).join('')}
-          </details>
-        </div>` : '';
-      box.innerHTML += `<div class="bubble assistant">${d.answer.replace(/\n/g,'<br>')}${sourcesHtml}</div>`;
-    } else {
-      box.innerHTML += `<div class="bubble assistant" style="color:#c0392b">${d.detail || 'Error'}</div>`;
+    const response = await fetch('/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const d = await response.json();
+      document.getElementById(bubbleId).innerHTML = `<span style="color:#c0392b">${d.detail || 'Error'}</span>`;
+      box.scrollTop = box.scrollHeight;
+      return;
+    }
+
+    const bubble = document.getElementById(bubbleId);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let answerText = '';
+    let sourcesHtml = '';
+    let buffer = '';
+    let firstToken = true;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // hold incomplete line for next chunk
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6);
+        if (raw === '[DONE]') break;
+
+        let msg;
+        try { msg = JSON.parse(raw); } catch(_) { continue; }
+
+        if (msg.delta) {
+          if (firstToken) { bubble.innerHTML = ''; firstToken = false; }
+          answerText += msg.delta;
+          bubble.innerHTML = answerText.replace(/\n/g, '<br>') + sourcesHtml;
+          box.scrollTop = box.scrollHeight;
+        }
+
+        if (msg.sources) {
+          sourcesHtml = msg.sources.length ? `
+            <div class="sources-block">
+              <details><summary>Sources (${msg.sources.length})</summary>
+                ${msg.sources.map(s => `<div style="margin-top:6px"><strong>${s.document_title}</strong>, chunk ${s.chunk_index}<br><span style="color:#777">${s.text.slice(0, 120)}…</span></div>`).join('')}
+              </details>
+            </div>` : '';
+          bubble.innerHTML = answerText.replace(/\n/g, '<br>') + sourcesHtml;
+          box.scrollTop = box.scrollHeight;
+        }
+      }
     }
   } catch(e) {
-    box.innerHTML += `<div class="bubble assistant" style="color:#c0392b">${e.message}</div>`;
+    const bubble = document.getElementById(bubbleId);
+    if (bubble) bubble.innerHTML = `<span style="color:#c0392b">${e.message}</span>`;
+  } finally {
+    input.disabled = false;
+    sendBtn.disabled = false;
+    input.focus();
+    box.scrollTop = box.scrollHeight;
   }
-  box.scrollTop = box.scrollHeight;
 }
 </script>
 </body>

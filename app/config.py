@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     # Retrieval
     search_top_k: int = 6
 
+    # Re-ranking (cross-encoder applied after hybrid search)
+    rerank_enabled: bool = True
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    rerank_candidates: int = 20   # fetch this many from hybrid search
+    rerank_top_k: int = 6         # keep this many after re-ranking
+
     class Config:
         env_file = ".env"
 

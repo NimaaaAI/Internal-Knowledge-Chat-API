@@ -48,6 +48,8 @@ class ChunkResult(BaseModel):
     document_author: str | None
     doc_type: str | None
     extra_metadata: dict[str, Any]
+    vector_rank: int | None = None   # rank in vector search (None = not found by vector)
+    fts_rank: int | None = None      # rank in full-text search (None = not found by FTS)
 
 
 class SearchResponse(BaseModel):
@@ -77,3 +79,36 @@ class SourceReference(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     sources: list[SourceReference]
+
+
+# ── Debug / Internals ─────────────────────────────────────────────────────────
+
+class DebugStats(BaseModel):
+    document_count: int
+    chunk_count: int
+
+
+class ChunkDetail(BaseModel):
+    chunk_id: uuid.UUID
+    document_id: uuid.UUID
+    document_title: str
+    chunk_index: int
+    text: str
+    embedding_dims: int
+
+
+class TraceResult(BaseModel):
+    chunk_id: uuid.UUID
+    document_id: uuid.UUID
+    document_title: str
+    chunk_index: int
+    text: str
+    vector_rank: int | None
+    fts_rank: int | None
+    rrf_score: float
+    rerank_score: float | None = None   # populated only when rerank=true in trace
+
+
+class TraceResponse(BaseModel):
+    query: str
+    results: list[TraceResult]

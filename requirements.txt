@@ -1,0 +1,4 @@
+pydantic-settings==2.14.0
+sqlalchemy[asyncio]==2.0.49
+asyncpg==0.31.0
+pgvector==0.4.2

@@ -1,16 +1,115 @@
 # Internal Knowledge Chat API
 
-A RAG (Retrieval-Augmented Generation) API: upload documents, search by meaning, and chat with your knowledge base — every answer includes source references so claims can be verified.
+---
+
+## Part 1 — What this project is
+
+### The core idea: RAG
+
+This is a **RAG** system — Retrieval-Augmented Generation.
+
+The problem it solves: an LLM like Claude knows a lot about the world, but it knows nothing about *your* internal documents. If you ask it "What did our Q1 memo say about the Nordic market?", it cannot answer — it has never seen that memo.
+
+RAG fixes this in two steps:
+1. **Retrieve** — search your document library and find the most relevant passages
+2. **Generate** — pass those passages to the LLM as context, then ask it your question
+
+The LLM now has the right information in front of it and can give a grounded answer. Every answer includes the source documents it used, so you can verify the claim.
 
 ---
 
-## How to run
+### How the search works (step by step)
 
-### Prerequisites
+When you ask a question, the API runs this pipeline:
+
+#### Step 1 — Embed the query
+Your question is converted to a list of 384 numbers (a "vector") using `all-MiniLM-L6-v2`. This captures the *meaning* of the question, not just the keywords.
+
+#### Step 2 — Hybrid search (VEC + FTS)
+Two searches run at the same time:
+
+- **VEC (Vector Search)** — finds chunks whose meaning is mathematically close to your question. Good for paraphrasing, synonyms, and conceptual similarity. Runs inside PostgreSQL using the `pgvector` extension with an HNSW index.
+- **FTS (Full-Text Search)** — finds chunks that contain the exact keywords from your question. Good for names, codes, and acronyms. Runs inside PostgreSQL using built-in `tsvector` / `GIN` index.
+
+The results of both searches are then merged using **RRF (Reciprocal Rank Fusion)**:
+
+```
+RRF score = 1/(60 + rank_vector) + 1/(60 + rank_fts)
+```
+
+A chunk that ranks well in *both* searches scores higher than one that only dominates one. The constant 60 is a standard dampening factor that prevents the single top result from dominating everything.
+
+#### Step 3 — Graph expansion (optional)
+At upload time, Claude reads each chunk and extracts named entities (people, organisations, places). These are stored in an `entities` table linked to their chunk.
+
+At query time, the top entities found across the retrieved chunks are used to pull in *extra* chunks from the database that mention the same entities but weren't in the original search results. This increases recall — you find related information you would have missed.
+
+#### Step 4 — Re-ranking
+The expanded pool of chunks is re-scored by a **cross-encoder** (`ms-marco-MiniLM-L-6-v2`). Unlike the embedding model (which reads the query and chunk *separately*), the cross-encoder reads them *together* — it can understand how well this specific passage answers this specific question. Top 6 are kept.
+
+#### Step 5 — Answer generation
+The final chunks are assembled into a context block and sent to Claude along with your question. Claude generates an answer and cites which documents it drew from.
+
+---
+
+### Models used
+
+| Model | Purpose | Why this model |
+|---|---|---|
+| `all-MiniLM-L6-v2` | Text → 384-dim vector (embedding) | Fast (~80 ms/chunk on CPU), free, no API key, runs locally |
+| `cross-encoder/ms-marco-MiniLM-L-6-v2` | Re-rank retrieved chunks by relevance | More accurate than embedding similarity — reads query+passage together |
+| `claude-sonnet-4-6` (Anthropic) | Generate answers + extract entities | Strong instruction-following, honest about uncertainty, good at structured output |
+
+---
+
+### Features
+
+| Feature | Description |
+|---|---|
+| Upload plain text | POST with JSON — text is chunked and embedded server-side |
+| Upload PDF or .txt | File upload — text extracted, chunked, embedded |
+| Metadata | Every document has `title`, `author`, `source`, `doc_type`, and free-form `extra_metadata`. All search and chat endpoints accept these as filters. |
+| Hybrid search | Vector similarity + full-text search merged by RRF |
+| Re-ranking | Cross-encoder scores top candidates before returning results |
+| Graph expansion | Entity-aware retrieval pulls related chunks by entity co-occurrence |
+| Streaming chat | Chat answers stream token-by-token over SSE |
+| Entity browser | Search all extracted entities by name or type (PERSON, ORGANIZATION, PLACE) |
+| Co-occurrence search | Find chunks that mention multiple entities together |
+| Retrieval trace | Inspect how any query scores through the full pipeline — vector rank, FTS rank, RRF score, cross-encoder score |
+| Pipeline Inspector | Watch each step of the RAG pipeline run live in your browser with timing |
+| API key auth | `X-Api-Key` header required when `API_KEY` env var is set |
+| Web UI | Built-in interface at `http://localhost:8000` with tabs for Chat, Search, Documents, and Internals |
+| OpenAPI docs | Auto-generated docs at `http://localhost:8000/docs` |
+
+---
+
+### Architecture
+
+Everything runs inside a single PostgreSQL database — no separate vector database needed.
+
+```
+documents          — one row per uploaded document + metadata
+chunks             — text fragments of ~150 words each
+  └─ embedding     — 384-dim vector (HNSW index for vector search)
+  └─ ts_vector     — full-text index (GIN index for keyword search)
+entities           — extracted named entities linked to their chunk
+```
+
+The API is built with **FastAPI** (Python), using async throughout. Embeddings run on CPU. The re-ranker also runs on CPU. The only external API call is to Anthropic (for generating answers and extracting entities).
+
+---
+
+## Part 2 — How to set up and run
+
+### What you need
+
 - Python 3.12+
 - Git
+- An Anthropic API key (from [console.anthropic.com](https://console.anthropic.com))
 
-### 1. Clone and create the virtual environment
+---
+
+### Step 1 — Clone the repository
 
 ```bash
 git clone https://github.com/NimaaaAI/Internal-Knowledge-Chat-API.git
@@ -19,9 +118,11 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 2. Install PostgreSQL 16
+---
 
-PostgreSQL is a system service — it lives outside the venv.
+### Step 2 — Install PostgreSQL
+
+PostgreSQL is the database that stores everything — documents, chunks, vectors, and entities. It is a system service, not a Python package.
 
 ```bash
 sudo apt-get update
@@ -29,22 +130,28 @@ sudo apt-get install -y postgresql postgresql-contrib postgresql-server-dev-all
 sudo service postgresql start
 ```
 
-### 3. Unlock local access (dev only)
+> **Every time you restart your machine or Codespace**, PostgreSQL stops. Run `sudo service postgresql start` again before starting the API.
 
-By default PostgreSQL uses `peer` auth on the Unix socket (must be the postgres OS user). Switch to `trust` for local dev:
+---
+
+### Step 3 — Allow local connections (development only)
+
+By default PostgreSQL requires you to be the `postgres` OS user to connect. Switch it to trust-mode for local development:
 
 ```bash
 sudo bash -c "sed -i 's/local   all             postgres                                peer/local   all             postgres                                trust/' /etc/postgresql/16/main/pg_hba.conf"
 sudo service postgresql restart
 ```
 
-### 4. Create the database and user
+---
+
+### Step 4 — Create the database and user
 
 ```bash
 psql -U postgres
 ```
 
-Inside the shell:
+Inside the psql shell, run:
 
 ```sql
 CREATE USER rag WITH PASSWORD 'rag';
@@ -53,9 +160,11 @@ GRANT ALL PRIVILEGES ON DATABASE knowledge TO rag;
 \q
 ```
 
-### 5. Install pgvector
+---
 
-pgvector is a PostgreSQL extension (not a separate service). It adds vector storage and similarity search directly inside PostgreSQL.
+### Step 5 — Install pgvector
+
+pgvector is a PostgreSQL extension that adds vector storage and similarity search. It is not a separate service — it runs inside your existing PostgreSQL.
 
 ```bash
 cd /tmp
@@ -64,186 +173,127 @@ cd pgvector && make && sudo make install
 cd -
 ```
 
-### 6. Apply the database schema
+---
+
+### Step 6 — Create the database schema
+
+This creates all tables, indexes, and grants the right permissions:
 
 ```bash
 psql -U postgres -d knowledge -f init.sql
 ```
 
-### 7. Set up environment variables
+---
+
+### Step 7 — Set up environment variables
 
 ```bash
 cp .env.example .env
-# Open .env and add your ANTHROPIC_API_KEY
 ```
 
-### 8. Install Python dependencies
+Open `.env` and fill in your Anthropic API key:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+The other values (database URL, API key for auth) have working defaults for local development.
+
+---
+
+### Step 8 — Install Python dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 9. Run the API
+This downloads the embedding model and cross-encoder model on first run (about 300 MB total). They are cached locally after that.
+
+---
+
+### Step 9 — Start the API
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-- API: `http://localhost:8000`
-- UI: `http://localhost:8000` (open in browser)
-- Interactive docs: `http://localhost:8000/docs`
+- Web UI: `http://localhost:8000`
+- API docs: `http://localhost:8000/docs`
 
 ---
 
-## Endpoints
+### Troubleshooting
+
+#### "Connection refused" when using the API
+
+PostgreSQL is not running. Fix:
+
+```bash
+sudo service postgresql start
+```
+
+This happens every time you restart your machine or Codespace. Make it a habit to run this before starting the API.
+
+#### "Permission denied" on first insert
+
+The database user `rag` does not have table-level access. PostgreSQL distinguishes database access from table access. Fix: re-run the schema file, which includes the correct GRANT statements:
+
+```bash
+psql -U postgres -d knowledge -f init.sql
+```
+
+#### "relation entities does not exist"
+
+The `entities` table was not created. This happens if you set up the database with an older version of `init.sql` before the entity graph feature was added. Fix: run this once:
+
+```bash
+psql -U postgres -d knowledge -c "
+CREATE TABLE IF NOT EXISTS entities (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    chunk_id      UUID NOT NULL REFERENCES chunks(id)     ON DELETE CASCADE,
+    document_id   UUID NOT NULL REFERENCES documents(id)  ON DELETE CASCADE,
+    name          TEXT NOT NULL,
+    type          TEXT NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_entities_name  ON entities (lower(name));
+CREATE INDEX IF NOT EXISTS idx_entities_type  ON entities (type);
+CREATE INDEX IF NOT EXISTS idx_entities_chunk ON entities (chunk_id);
+CREATE INDEX IF NOT EXISTS idx_entities_doc   ON entities (document_id);
+GRANT ALL ON entities TO rag;
+"
+```
+
+#### Models downloading slowly on first start
+
+The first startup downloads `all-MiniLM-L6-v2` (~90 MB) and `ms-marco-MiniLM-L-6-v2` (~80 MB) from HuggingFace. This is normal — it only happens once. After that, they are cached in `~/.cache/huggingface/`.
+
+#### The app starts but entity extraction is slow
+
+Entity extraction calls the Anthropic API once per chunk — if you upload a large document with many chunks, this takes time. The API runs up to 5 extractions in parallel (controlled by `GRAPH_CONCURRENCY` in settings). This is by design to avoid hitting Anthropic rate limits.
+
+---
+
+### API endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| POST | /text | Upload plain text with metadata |
-| POST | /document | Upload a PDF or .txt file |
-| GET | /search | Hybrid semantic + keyword search |
-| POST | /chat | Ask a question, get answer + source references |
-| GET | /documents | List all uploaded documents |
-| DELETE | /documents/{id} | Delete a document and all its chunks |
+| POST | `/text` | Upload plain text with metadata |
+| POST | `/document` | Upload a PDF or .txt file |
+| GET | `/search` | Hybrid search with optional re-ranking |
+| POST | `/chat` | Ask a question, get an answer with source citations |
+| GET | `/documents` | List all uploaded documents |
+| DELETE | `/documents/{id}` | Delete a document and all its data |
+| GET | `/debug/stats` | Document and chunk counts |
+| GET | `/debug/chunks` | Browse all chunks for a document |
+| GET | `/debug/trace` | Full retrieval trace for a query |
+| GET | `/debug/entities` | Search extracted entities |
+| GET | `/debug/cooccurrence` | Find chunks mentioning multiple entities |
+| GET | `/debug/pipeline` | Live pipeline inspection (streaming) |
 
 ---
 
-## Architectural choices and tradeoffs
-
-### Stack
-
-| Layer | Choice | Reason |
-|---|---|---|
-| Framework | Python + FastAPI | Async-native, auto OpenAPI docs, fast to iterate |
-| Database | PostgreSQL 16 + pgvector | One service handles relational data, vector search (HNSW), and full-text search (GIN) — no separate vector DB needed |
-| Embeddings | `all-MiniLM-L6-v2` | 384-dim, free, no second API key, runs on CPU in ~80 ms/chunk |
-| LLM | Claude claude-sonnet-4-6 (Anthropic) | Strong instruction-following, honest about uncertainty, good inline citations |
-| PDF extraction | PyMuPDF | Fast, layout-aware, handles multi-column documents |
-
-### Why pgvector instead of a dedicated vector DB (Qdrant, Weaviate)?
-
-A dedicated vector DB requires running two services: one for relational data and one for vectors. With pgvector, one PostgreSQL instance handles everything — vector similarity search, full-text search, relational joins, and metadata filtering — all in a single SQL query. At knowledge-base scale (< 1M chunks), pgvector with HNSW is fast enough, and the SQL composability is worth more than the marginal performance gap.
-
-If the corpus grew to tens of millions of chunks and sub-10 ms p99 latency were a hard requirement, Qdrant or Weaviate would be the right call.
-
-### Data model
-
-```
-documents
-  id            UUID        primary key
-  title         TEXT        human-readable name
-  source        TEXT        where it came from (URL, internal, etc.)
-  author        TEXT        who wrote it
-  doc_type      TEXT        memo | report | article | ...
-  content_type  TEXT        'text' | 'document' (PDF)
-  extra_metadata JSONB      arbitrary key-value pairs for filtering
-  created_at    TIMESTAMPTZ
-
-chunks
-  id            UUID        primary key
-  document_id   UUID        FK → documents.id (CASCADE DELETE)
-  chunk_index   INTEGER     position within the document
-  text          TEXT        raw chunk text
-  embedding     vector(384) L2-normalised embedding for cosine search
-  ts_vector     TSVECTOR    auto-maintained by DB trigger for FTS
-  created_at    TIMESTAMPTZ
-```
-
-Indexes:
-- `HNSW` on `chunks.embedding` — approximate nearest-neighbour vector search (better than IVFFlat for dynamic insert patterns)
-- `GIN` on `chunks.ts_vector` — full-text keyword search
-- B-tree on `chunks.document_id` — chunk lookup by document
-- `GIN` on `documents.extra_metadata` — fast JSONB key-value filtering
-
-### Chunk size: 150 words, 30-word overlap
-
-`all-MiniLM-L6-v2` has a hard limit of 256 wordpiece tokens. English text averages ~1.4 wordpieces per word, so 150 words ≈ 210 wordpieces — safely under the cap with headroom for subword-heavy content.
-
-- **Why not smaller (50 words)?** Too little context — the embedding can't represent meaning well with only 2–3 sentences.
-- **Why not larger (300+ words)?** Risk of silent truncation by the model. Also, larger chunks make source citations less precise.
-- **30-word overlap** prevents losing meaning at chunk boundaries — sentences that span two chunks are partially represented in both.
-
-If switching to a model with a larger context window (e.g., `bge-large-en-v1.5` at 512 tokens), chunk size would increase to ~350 words.
-
-### Hybrid search: vector + full-text via Reciprocal Rank Fusion
-
-Pure vector search misses exact keyword matches (names, codes, acronyms). Pure BM25 misses synonyms and paraphrase. RRF merges both ranked lists without needing to normalise scores across different scales:
-
-```
-RRF score = 1/(60 + rank_vector) + 1/(60 + rank_fts)
-```
-
-The constant 60 is standard (from Cormack et al.). A chunk that ranks well in both searches scores higher than one that dominates only one. This runs entirely inside PostgreSQL — no third service needed.
-
-### Metadata filtering
-
-Every document stores a `doc_type`, `author`, `source`, and a free-form `extra_metadata` JSONB column. All search and chat endpoints accept these as optional filters, which translate to SQL `WHERE` clauses. This allows questions like "What do our Q1 memos say about the Nordic market?" without noise from unrelated documents.
-
-**Important:** when two unrelated documents are in the knowledge base, always use metadata filters to restrict retrieval to the relevant scope. Without filters, the retrieval mixes context from all documents and the LLM may correctly say "I can't find that information" even when it exists.
-
----
-
-## Stretch goals implemented
-
-| Feature | Status | Notes |
-|---|---|---|
-| Hybrid search (vector + BM25) | ✅ Done | RRF over pgvector + PostgreSQL FTS |
-| Streaming responses | ✅ Done | `/chat` with `"stream": true` returns SSE |
-| Auth (API key) | ✅ Done | `X-Api-Key` header, enabled when `API_KEY` env var is set |
-| Metadata filtering | ✅ Done | `doc_type`, `author`, `source`, `extra_metadata` on all endpoints |
-| Re-ranking | ❌ Not done | See tradeoffs below |
-| Graph representation | ❌ Not done | See tradeoffs below |
-
----
-
-## What was left out and why
-
-### Re-ranking
-A cross-encoder (e.g., `ms-marco-MiniLM-L-6-v2`) re-scores the top-20 retrieved chunks before returning top-6. This would improve precision meaningfully. Skipped because it adds ~200 ms latency per query and another model download — a reasonable tradeoff for a foundation that already uses hybrid search.
-
-### Graph representation
-Entity extraction + a relations table would improve cross-document retrieval significantly. The approach: run NER (spaCy or a Claude call) on each chunk at index time, store `(entity, type, chunk_id)` triples, and at query time expand retrieval to include all chunks mentioning the same entities. Skipped due to time budget. The pgvector + FTS combination covers the primary retrieval use cases well without it.
-
-### Contradiction handling
-When two documents contradict each other, the current system retrieves both and passes both to Claude, which correctly hedges: *"Document A says X, but Document B says Y."* A production system would add a post-retrieval contradiction detection step — a second Claude call to compare high-scoring chunks with opposing claims and surface the conflict explicitly to the user.
-
-### Model/API key selection in UI
-The UI currently uses the API key from `.env`. A first-page setup screen where users enter their own API key and choose their LLM model would make this portable without touching configuration files. Deprioritised because the instructions explicitly say *"We're not evaluating UI/frontend."*
-
----
-
-## How I used AI during this work
-
-The primary tool was Claude Code (this same model) as a pair programmer. Here is an honest breakdown.
-
-**What I delegated to the AI:**
-- FastAPI router boilerplate and Pydantic schema definitions
-- SQLAlchemy async session setup
-- The RRF SQL query — I described the algorithm, the AI translated it to a CTE-based SQL query
-- The streaming SSE implementation for the chat endpoint
-- The frontend HTML/CSS/JS structure
-
-**What I directed and corrected:**
-
-| AI choice | My correction | Reason |
-|---|---|---|
-| `IVFFlat` vector index | Changed to `HNSW` | IVFFlat requires pre-defining cluster count and degrades with dynamic inserts |
-| Character-based chunker | Changed to word-based | Character count maps poorly to the model's wordpiece token limit |
-| Suggested running Postgres + Qdrant | Simplified to pgvector only | One service is simpler; SQL composability covers the filtering needs |
-| `embedding <=> :param::vector` in SQLAlchemy | Changed to `CAST(:param AS vector)` | asyncpg couldn't parse the `::` cast next to a named parameter — caused a runtime syntax error |
-| `anthropic.AsyncAnthropic()` with no key | Changed to pass `api_key=settings.anthropic_api_key` explicitly | Client initialised at import time before env vars were available |
-| Granted DB-level privileges only | Added table-level `GRANT ALL ON ALL TABLES` | PostgreSQL distinguishes database access from table access — app got `permission denied` on first insert |
-
-**Where I trusted the AI fully:**
-- PyMuPDF PDF extraction (standard usage, no surprises)
-- Pydantic v2 schema patterns
-- The chunking sliding-window logic (correct first time, verified with a word-count test)
-
----
-
-## Example requests
-
-See [`examples.sh`](examples.sh) for a complete runnable curl script covering all endpoints.
+### Example requests
 
 ```bash
 # Upload plain text
@@ -258,25 +308,13 @@ curl -X POST http://localhost:8000/text \
     "text": "Our Q1 2024 focus is expanding into the Nordic market..."
   }'
 
-# Upload a PDF
-curl -X POST http://localhost:8000/document \
-  -F "file=@report.pdf" \
-  -F "title=Annual Report 2023" \
-  -F "doc_type=report" \
-  -F 'extra_metadata={"year":"2023"}'
-
 # Search with metadata filter
 curl "http://localhost:8000/search?q=Nordic+expansion&doc_type=memo"
 
-# Chat (filtered to memos only)
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What is our Q1 strategy?", "doc_type": "memo"}'
-
-# Chat with streaming
+# Chat (streaming)
 curl -N -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
-  -d '{"question": "Summarise the strategy.", "stream": true}'
+  -d '{"question": "What is our Q1 strategy?", "doc_type": "memo", "stream": true}'
 
 # List documents
 curl http://localhost:8000/documents
@@ -284,3 +322,5 @@ curl http://localhost:8000/documents
 # Delete a document
 curl -X DELETE http://localhost:8000/documents/{document_id}
 ```
+
+See [`examples.sh`](examples.sh) for a full runnable script covering all endpoints.

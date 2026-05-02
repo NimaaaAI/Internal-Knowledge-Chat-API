@@ -325,6 +325,10 @@ There is no `PATCH /documents/{id}` endpoint. Updating a document requires delet
 
 Structured logging, metrics, CI/CD pipelines, and rate limiting were not implemented. The brief explicitly excluded these from evaluation.
 
+### Conversational memory
+
+The chat endpoint treats every question as independent — it has no memory of previous questions in the same session. A production system would maintain a per-session message history and include it in the Claude prompt, enabling follow-up questions like "tell me more about that" or "who else was involved?". Deprioritised because it adds session state management (in-memory or Redis) and the core retrieval quality is better demonstrated with standalone queries.
+
 ---
 
 ## 7. How I Used AI During This Work

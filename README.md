@@ -148,6 +148,7 @@ uvicorn app.main:app --reload
 | `GET` | `/debug/pipeline` | Live step-by-step pipeline inspection (SSE) |
 
 See [`examples.sh`](examples.sh) for runnable curl examples covering all endpoints.
+Interactive API docs (Swagger UI) are available at **http://localhost:8000/docs** — every endpoint can be tested directly in the browser with no additional tools.
 
 ### Example: upload and query
 

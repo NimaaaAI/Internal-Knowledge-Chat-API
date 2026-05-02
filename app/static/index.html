@@ -137,7 +137,7 @@
       <div><label>Source</label><input id="txt-source" type="text" placeholder="internal / url / ..."></div>
       <div><label>Extra metadata (JSON)</label><input id="txt-meta" type="text" value="{}"></div>
     </div>
-    <button onclick="uploadText()">Upload Text</button>
+    <button id="txt-upload-btn" onclick="uploadText()">Upload Text</button>
     <div id="txt-msg"></div>
   </div>
 
@@ -156,7 +156,7 @@
       <div><label>Source</label><input id="doc-source" type="text"></div>
       <div><label>Extra metadata (JSON)</label><input id="doc-meta" type="text" value="{}"></div>
     </div>
-    <button onclick="uploadDoc()">Upload File</button>
+    <button id="doc-upload-btn" onclick="uploadDoc()">Upload File</button>
     <div id="doc-msg"></div>
   </div>
 </div>
@@ -384,6 +384,9 @@ async function previewFile() {
 
 // ── Upload text ──
 async function uploadText() {
+  const btn = document.getElementById('txt-upload-btn');
+  btn.disabled = true;
+  btn.textContent = 'Uploading…';
   const body = {
     text: document.getElementById('txt-text').value,
     title: document.getElementById('txt-title').value,
@@ -404,12 +407,19 @@ async function uploadText() {
       msg('txt-msg', d.detail || 'Upload failed', false);
     }
   } catch(e) { msg('txt-msg', e.message, false); }
+  finally {
+    btn.disabled = false;
+    btn.textContent = 'Upload Text';
+  }
 }
 
 // ── Upload document ──
 async function uploadDoc() {
   const file = document.getElementById('doc-file').files[0];
   if (!file) { msg('doc-msg', 'Please select a file', false); return; }
+  const btn = document.getElementById('doc-upload-btn');
+  btn.disabled = true;
+  btn.textContent = 'Uploading…';
   const form = new FormData();
   form.append('file', file);
   form.append('title', document.getElementById('doc-title').value);
@@ -430,6 +440,10 @@ async function uploadDoc() {
       msg('doc-msg', d.detail || 'Upload failed', false);
     }
   } catch(e) { msg('doc-msg', e.message, false); }
+  finally {
+    btn.disabled = false;
+    btn.textContent = 'Upload File';
+  }
 }
 
 // ── Documents list ──

@@ -46,6 +46,7 @@ docker compose down -v
 ```
 
 <!-- ADD SCREENSHOT: browser open at http://localhost:8000 showing the Upload tab -->
+<img width="1298" height="885" alt="image" src="https://github.com/user-attachments/assets/00d52eb2-4398-42c0-b1f8-676e5a7c032b" />
 
 ---
 

@@ -14,30 +14,44 @@ def chunk_text(text: str) -> list[str]:
     overlap = settings.chunk_overlap_words # 30 words overlap between chunks
 
     # Split on whitespace, keeping the separators so we can reconstruct spacing
-    tokens = re.split(r"(\s+)", text.strip())
+    paragraphs = [p.strip() for p in re.split(r"\n\n+", text.strip()) if p.strip()]
 
-    # words[i] = (original_token_index, word_string) — only non-whitespace tokens
-    words = [(i, t) for i, t in enumerate(tokens) if t.strip()]
-
-    if not words:
+    if not paragraphs:
         return []
 
+    def word_count(s: str) -> int:
+        return len(s.split())
+
+    def split_sentences(paragraph: str) -> list[str]:
+        # Fallback: split a long paragraph into sentences
+        return [s.strip() for s in re.split(r"(?<=[.!?])\s+", paragraph) if s.strip()]
+
+    # Build a flat list of units — either whole paragraphs or sentences
+    # (sentences only appear when a paragraph exceeds the word limit)
+    units: list[str] = []
+    for para in paragraphs:
+        if word_count(para) <= size:
+            units.append(para)
+        else:
+            units.extend(split_sentences(para))
+
+    # Group units into chunks up to the word limit
     chunks: list[str] = []
-    start = 0
+    current: list[str] = []
+    current_words = 0
 
-    while start < len(words):
-        end = min(start + size, len(words))
+    for unit in units:
+        uw = word_count(unit)
+        if current and current_words + uw > size:
+            chunks.append("\n\n".join(current))
+            # Overlap: carry last unit into the next chunk
+            current = [current[-1]]
+            current_words = word_count(current[0])
+        current.append(unit)
+        current_words += uw
 
-        first_token_idx = words[start][0]
-        last_token_idx = words[end - 1][0]
-
-        chunk = "".join(tokens[first_token_idx: last_token_idx + 1]).strip()
-        if chunk:
-            chunks.append(chunk)
-
-        if end >= len(words):
-            break
-
-        start += size - overlap
+    if current:
+        chunks.append("\n\n".join(current))
 
     return chunks
+    

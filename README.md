@@ -2,7 +2,7 @@
 
 A production-ready RAG (Retrieval-Augmented Generation) system that lets teams upload internal documents and query them in natural language. Every answer is grounded in the source material and includes precise citations so claims can be verified.
 
-Built with Python, FastAPI, PostgreSQL, and Claude. All stretch goals implemented.
+Built with Python, FastAPI, PostgreSQL, and Claude.
 
 ---
 
@@ -44,8 +44,6 @@ All uploaded documents and data persist between restarts. To wipe everything and
 ```bash
 docker compose down -v
 ```
-
-<!-- ADD SCREENSHOT: browser open at http://localhost:8000 showing the Upload tab -->
 
 ---
 
@@ -184,18 +182,14 @@ curl -N -X POST http://localhost:8000/chat \
 | Database | PostgreSQL 16 + pgvector | One service handles vectors, full-text search, relational joins, and metadata filtering — no separate vector DB needed |
 | Embedding model | `all-MiniLM-L6-v2` (384-dim) | Free, no API key, runs on CPU in ~80 ms/chunk, no external dependency |
 | Re-ranking model | `ms-marco-MiniLM-L-6-v2` | Cross-encoder trained on MS MARCO — reads query and passage together for precise relevance scoring |
-| LLM | Claude Sonnet (Anthropic) | Strong instruction-following, reliable structured JSON output for entity extraction, honest about uncertainty |
+| LLM | Claude Sonnet (Anthropic) | Strong instruction-following, reliable structured JSON output for entity extraction |
 | PDF extraction | PyMuPDF | Fast, layout-aware, ships as a compiled wheel with no system dependencies |
 
 ### Why PostgreSQL instead of a dedicated vector database?
 
 A dedicated vector database (Qdrant, Weaviate) requires running a second service alongside PostgreSQL for relational data. With pgvector, one database handles everything — vector similarity search, full-text search, relational joins, and metadata filtering — all composable in a single SQL query. At knowledge-base scale (under one million chunks), pgvector with HNSW matches the retrieval quality of dedicated solutions while eliminating operational complexity.
 
-If the corpus grew to tens of millions of chunks with sub-10 ms latency requirements, Qdrant would be the right call.
-
-### Why HNSW over IVFFlat?
-
-IVFFlat requires pre-defining a cluster count at index creation time and degrades in quality as new data is inserted without periodic re-clustering. HNSW builds incrementally and maintains consistent quality with dynamic inserts — the right choice for a knowledge base where documents are uploaded continuously.
+If the chunks grew to tens of millions of chunks with sub-10 ms latency requirements, Qdrant would be the right call.
 
 ### Chunk size: 150 words, 30-word overlap
 
@@ -224,31 +218,23 @@ Results are merged with Reciprocal Rank Fusion:
 RRF score = 1/(60 + rank_vector) + 1/(60 + rank_fts)
 ```
 
-A chunk that ranks well in both searches scores higher than one that dominates only one. The constant 60 is the standard dampening factor from Cormack et al. (2009). This runs entirely inside PostgreSQL — no third service required.
-
-<!-- ADD SCREENSHOT: Search tab showing results with VEC+FTS / VEC only / FTS only badges -->
-
 **Step 2 — Graph expansion**
 
 At upload time, Claude reads each chunk and extracts named entities (people, organisations, places), storing them in an `entities` table linked to their chunk. At query time, the most-mentioned entities across the retrieved chunks are used to pull in additional chunks that share those entities but did not rank highly in the vector or full-text search. This increases recall for cross-document queries without adding a separate graph database.
 
-<!-- ADD SCREENSHOT: Internals tab → Entity Graph section showing entity browser and co-occurrence results -->
 
 **Step 3 — Cross-encoder re-ranking**
 
-The expanded pool of candidates is re-scored by the cross-encoder, which reads the query and each passage together in the same attention layers. Unlike the bi-encoder embedding model — which encodes the query and passage independently — the cross-encoder directly models how well a specific passage answers a specific question. The top 6 candidates are kept for the LLM.
+The expanded pool of candidates is re-scored by the cross-encoder, which reads the query and each passage together in the same attention layers. The cross-encoder directly models how well a specific passage answers a specific question. The top 6 candidates are kept for the LLM.
 
 **Step 4 — Answer generation**
 
 The final chunks are formatted into a labelled context block and sent to Claude with a system prompt that restricts answers to the provided context and requires inline source citations in the format `[Doc: title, chunk N]`. Streaming responses are delivered token by token via Server-Sent Events.
 
-<!-- ADD SCREENSHOT: Chat tab showing a streaming answer with source references -->
 
 **Pipeline Inspector**
 
 Every step of the pipeline can be observed live in the browser, including timing, which entities were used for graph expansion, how chunks moved in ranking after re-ranking, and the exact context sent to Claude.
-
-<!-- ADD SCREENSHOT: Internals tab → Pipeline Inspector showing all steps completed with timing -->
 
 ### Data model
 
@@ -283,13 +269,11 @@ entities
 
 Deleting a document cascades automatically through its chunks and entities.
 
-<!-- ADD SCREENSHOT: Documents tab showing uploaded documents with metadata, chunk counts, and extra_metadata fields -->
 
 ### Upload flow
 
 When a document is uploaded, embedding (CPU) and entity extraction (Claude API) run concurrently using `asyncio.gather`. This means the network round-trips to Claude overlap with local CPU work — reducing upload time compared to running them sequentially.
 
-<!-- ADD SCREENSHOT: Upload tab showing the metadata auto-detection note after selecting a PDF -->
 
 ---
 
@@ -348,11 +332,11 @@ The project was built incrementally: virtual environment first, then dependencie
 - The RRF SQL query — I described the algorithm, the AI translated it into a CTE-based query
 - The SSE streaming implementation for the chat endpoint
 - The Pipeline Inspector frontend — event rendering and step state transitions
-- HTML/CSS structure and layout
+- HTML structure and layout
 
 **What I directed:**
 
-Every significant architectural decision was made before any code was written. The choice of PostgreSQL over a dedicated vector database, HNSW over IVFFlat, the chunking strategy based on the model's token limit, and the three-stage retrieval pipeline (hybrid → graph → re-rank) were all defined upfront. The AI implemented what I specified, not the other way around.
+Every significant architectural decision was made before any code was written. The choice of PostgreSQL over a dedicated vector database, the chunking strategy based on the model's token limit, and the three-stage retrieval pipeline (hybrid → graph → re-rank) were all defined upfront. The AI implemented what I specified, not the other way around.
 
 For Docker, rather than letting the AI generate a complete setup in one shot, I guided it to understand each component first — what the pgvector image does, why the healthcheck matters, how volumes work — before writing the files. This meant I could verify the setup was correct rather than just hoping it worked.
 
@@ -360,10 +344,8 @@ For Docker, rather than letting the AI generate a complete setup in one shot, I 
 
 | AI choice | My correction | Reason |
 |---|---|---|
-| `IVFFlat` vector index | Changed to `HNSW` | IVFFlat requires pre-defining cluster count and degrades with dynamic inserts |
 | Character-based chunker | Changed to word-based | Character count maps poorly to the model's wordpiece token limit |
 | Suggested Postgres + Qdrant | Simplified to pgvector only | One service is simpler; SQL composability covers all filtering needs |
-| `embedding <=> :param::vector` | Changed to `CAST(:param AS vector)` | asyncpg could not parse the `::` cast next to a named parameter |
 | `AsyncAnthropic()` with no key | Changed to pass `api_key` explicitly | Client initialised at import time before environment variables were loaded |
 | Database-level grants only | Added table-level `GRANT ALL ON ALL TABLES` | PostgreSQL distinguishes database access from table access |
 | Sequential embed then extract | Restructured to `asyncio.gather` | Embedding (CPU) and entity extraction (network) are independent — running them concurrently reduced upload time |
@@ -374,4 +356,3 @@ For Docker, rather than letting the AI generate a complete setup in one shot, I 
 - The sliding-window chunking logic (correct on first attempt, verified with a manual word-count test)
 - Docker Compose syntax for the pgvector image
 
-**The honest summary:** the most valuable use of the AI was speed on implementation tasks where the design was already clear. The architectural decisions, the incremental build approach, and the verification at each step — that was the human work. The AI made it possible to move faster on the parts that didn't require judgment.

@@ -1,3 +1,14 @@
+-- Create app user if it doesn't exist (safe for both Docker and manual setup)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'rag') THEN
+    CREATE USER rag WITH PASSWORD 'rag';
+  END IF;
+END
+$$;
+
+GRANT ALL PRIVILEGES ON DATABASE knowledge TO rag;
+
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -49,6 +60,21 @@ CREATE INDEX IF NOT EXISTS chunks_document_id_idx
 -- GIN index on extra_metadata for fast key-value filtering
 CREATE INDEX IF NOT EXISTS documents_metadata_idx
     ON documents USING GIN (extra_metadata);
+
+-- Entity graph: one row per entity mention per chunk
+CREATE TABLE IF NOT EXISTS entities (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    chunk_id    UUID        NOT NULL REFERENCES chunks(id)    ON DELETE CASCADE,
+    document_id UUID        NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    name        TEXT        NOT NULL,
+    type        TEXT        NOT NULL,   -- PERSON | ORGANIZATION | PLACE
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS entities_name_idx   ON entities (lower(name));
+CREATE INDEX IF NOT EXISTS entities_type_idx   ON entities (type);
+CREATE INDEX IF NOT EXISTS entities_chunk_idx  ON entities (chunk_id);
+CREATE INDEX IF NOT EXISTS entities_doc_idx    ON entities (document_id);
 
 -- Grant the app user full access to all tables and sequences
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO rag;

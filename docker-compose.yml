@@ -1,0 +1,33 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: knowledge
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d knowledge"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://rag:rag@db:5432/knowledge
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      API_KEY: ${API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+
+volumes:
+  pgdata:
+  hf_cache:

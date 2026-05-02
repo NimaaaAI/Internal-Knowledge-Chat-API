@@ -125,8 +125,8 @@
 
   <div class="card">
     <h3 style="margin-bottom:16px;font-size:1rem">Plain Text</h3>
-    <label>Text *</label>
-    <textarea id="txt-text" rows="5" placeholder="Paste your document text here..."></textarea>
+    <label>Text * <span id="txt-wordcount" style="font-weight:normal;color:#888;margin-left:6px;font-size:0.78rem"></span></label>
+    <textarea id="txt-text" rows="5" placeholder="Paste your document text here..." oninput="updateWordCount()"></textarea>
     <label>Title *</label>
     <input id="txt-title" type="text" placeholder="e.g. Q1 Strategy Memo">
     <div class="row">
@@ -144,11 +144,12 @@
   <div class="card">
     <h3 style="margin-bottom:16px;font-size:1rem">PDF / Text File</h3>
     <label>File * (PDF or .txt)</label>
-    <input id="doc-file" type="file" accept=".pdf,.txt">
+    <input id="doc-file" type="file" accept=".pdf,.txt" onchange="previewFile()">
+    <div id="doc-preview-note" style="min-height:20px;margin-top:8px"></div>
     <label>Title *</label>
-    <input id="doc-title" type="text">
+    <input id="doc-title" type="text" placeholder="Auto-filled from file — edit if needed">
     <div class="row">
-      <div><label>Author</label><input id="doc-author" type="text"></div>
+      <div><label>Author</label><input id="doc-author" type="text" placeholder="Auto-filled if found in PDF"></div>
       <div><label>Doc type</label><input id="doc-doctype" type="text" placeholder="memo / report / article"></div>
     </div>
     <div class="row">
@@ -249,6 +250,36 @@
     <div id="int-trace-results" style="margin-top:14px"></div>
   </div>
 
+  <!-- Entity Graph -->
+  <div class="card">
+    <h3 style="margin-bottom:8px;font-size:1rem">Entity Graph</h3>
+    <p style="font-size:0.82rem;color:#666;margin-bottom:16px">Entities (people, organisations, places) are extracted from every chunk at upload time and stored as a graph. Use the tools below to explore them.</p>
+
+    <label>Search entities by name</label>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="ent-name" type="text" placeholder="e.g. Jane Smith" style="flex:1" onkeydown="if(event.key==='Enter')searchEntities()">
+      <select id="ent-type" style="padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:0.9rem;background:#fafafa">
+        <option value="">Any type</option>
+        <option value="PERSON">Person</option>
+        <option value="ORGANIZATION">Organization</option>
+        <option value="PLACE">Place</option>
+      </select>
+      <button onclick="searchEntities()" style="margin:0">Search</button>
+    </div>
+    <div id="ent-results" style="margin-top:12px"></div>
+
+    <hr style="margin:18px 0;border:none;border-top:1px solid #eee">
+
+    <label>Co-occurrence: find chunks mentioning X <em>and</em> Y together</label>
+    <p style="font-size:0.8rem;color:#888;margin-bottom:8px">This is the graph retrieval story — crossing entity boundaries to find related content.</p>
+    <div style="display:flex;gap:8px">
+      <input id="cooc-a" type="text" placeholder="Entity A" style="flex:1" onkeydown="if(event.key==='Enter')findCooccurrence()">
+      <input id="cooc-b" type="text" placeholder="Entity B" style="flex:1" onkeydown="if(event.key==='Enter')findCooccurrence()">
+      <button onclick="findCooccurrence()" style="margin:0">Find</button>
+    </div>
+    <div id="cooc-results" style="margin-top:12px"></div>
+  </div>
+
   <!-- Pipeline Inspector -->
   <div class="card">
     <h3 style="margin-bottom:8px;font-size:1rem">Pipeline Inspector</h3>
@@ -276,6 +307,64 @@ function msg(id, text, ok) {
   const el = document.getElementById(id);
   el.className = 'msg ' + (ok ? 'ok' : 'err');
   el.textContent = text;
+}
+
+// ── Live word count for plain text ──
+function updateWordCount() {
+  const text = document.getElementById('txt-text').value.trim();
+  const count = text ? text.split(/\s+/).length : 0;
+  document.getElementById('txt-wordcount').textContent = count ? `(${count} words)` : '';
+}
+
+// ── File preview: auto-fill form fields before upload ──
+async function previewFile() {
+  const file = document.getElementById('doc-file').files[0];
+  const note = document.getElementById('doc-preview-note');
+  if (!file) { note.innerHTML = ''; return; }
+
+  note.innerHTML = '<em style="color:#888;font-size:0.82rem">Reading file metadata…</em>';
+
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const r = await fetch('/upload/preview', { method: 'POST', body: form });
+    if (!r.ok) { note.innerHTML = ''; return; }
+    const data = await r.json();
+
+    // Pre-fill title if still empty
+    const titleEl = document.getElementById('doc-title');
+    if (!titleEl.value && data.title) titleEl.value = data.title;
+
+    // Pre-fill author if still empty and PDF had one
+    const authorEl = document.getElementById('doc-author');
+    if (!authorEl.value && data.author) authorEl.value = data.author;
+
+    // Build auto metadata and merge with whatever the user already typed
+    const autoMeta = {};
+    if (data.file_size_bytes) autoMeta.file_size_bytes = data.file_size_bytes;
+    if (data.page_count)      autoMeta.page_count      = data.page_count;
+    if (data.word_count)      autoMeta.word_count       = data.word_count;
+    try {
+      const existing = JSON.parse(document.getElementById('doc-meta').value || '{}');
+      document.getElementById('doc-meta').value = JSON.stringify({ ...autoMeta, ...existing });
+    } catch(_) {
+      document.getElementById('doc-meta').value = JSON.stringify(autoMeta);
+    }
+
+    // Build the info line shown to the user
+    const detected = [];
+    if (data.title)           detected.push(`title: <strong>${data.title}</strong>`);
+    if (data.author)          detected.push(`author: <strong>${data.author}</strong>`);
+    if (data.page_count)      detected.push(`${data.page_count} pages`);
+    if (data.word_count)      detected.push(`~${data.word_count} words`);
+    if (data.file_size_bytes) detected.push(`${(data.file_size_bytes / 1024).toFixed(1)} KB`);
+
+    note.innerHTML = detected.length
+      ? `<span style="color:#1e8449;font-size:0.82rem">✓ Auto-detected — ${detected.join(' · ')} — review fields below before uploading</span>`
+      : `<span style="color:#888;font-size:0.82rem">No metadata found in file — fill in the fields manually</span>`;
+  } catch(e) {
+    note.innerHTML = '<span style="color:#888;font-size:0.82rem">Could not read file metadata</span>';
+  }
 }
 
 // ── Upload text ──
@@ -456,6 +545,60 @@ async function runTrace() {
   } catch(e) { el.innerHTML = `<em style="color:#c0392b">${e.message}</em>`; }
 }
 
+// ── Entity Graph ──
+const _TYPE_COLORS = { PERSON: '#d6eaf8', ORGANIZATION: '#fdebd0', PLACE: '#d5f5e3' };
+const _TYPE_TEXT   = { PERSON: '#1a5276',  ORGANIZATION: '#a04000',  PLACE: '#1e8449' };
+
+async function searchEntities() {
+  const name = document.getElementById('ent-name').value.trim();
+  const type = document.getElementById('ent-type').value;
+  const el = document.getElementById('ent-results');
+  el.innerHTML = '<em style="color:#888">Searching…</em>';
+  const params = new URLSearchParams({ limit: 30 });
+  if (name) params.append('name', name);
+  if (type) params.append('type', type);
+  try {
+    const rows = await (await fetch(`/debug/entities?${params}`)).json();
+    if (!rows.length) { el.innerHTML = '<em style="color:#888">No entities found.</em>'; return; }
+    el.innerHTML = rows.map(r => `
+      <div class="chunk-item">
+        <div class="chunk-header">
+          <span style="background:${_TYPE_COLORS[r.type]||'#eee'};color:${_TYPE_TEXT[r.type]||'#333'};padding:2px 8px;border-radius:10px;font-size:0.73rem;font-weight:600">${r.type}</span>
+          <strong>${r.name}</strong>
+          <span class="chunk-meta">— <em>${r.document_title}</em>, chunk ${r.chunk_index}</span>
+        </div>
+        <div class="chunk-text">${r.text_preview}…</div>
+      </div>`).join('');
+  } catch(e) { el.innerHTML = `<em style="color:#c0392b">${e.message}</em>`; }
+}
+
+async function findCooccurrence() {
+  const a = document.getElementById('cooc-a').value.trim();
+  const b = document.getElementById('cooc-b').value.trim();
+  if (!a || !b) return;
+  const el = document.getElementById('cooc-results');
+  el.innerHTML = '<em style="color:#888">Searching graph…</em>';
+  try {
+    const params = new URLSearchParams();
+    params.append('name', a);
+    params.append('name', b);
+    const rows = await (await fetch(`/debug/cooccurrence?${params}`)).json();
+    if (!rows.length) {
+      el.innerHTML = '<em style="color:#888">No chunks found that mention both entities.</em>';
+      return;
+    }
+    el.innerHTML = `<div style="font-size:0.82rem;color:#555;margin-bottom:8px">Found <strong>${rows.length}</strong> chunk(s) mentioning both "<strong>${a}</strong>" and "<strong>${b}</strong>":</div>` +
+      rows.map(r => `
+        <div class="chunk-item">
+          <div class="chunk-header">
+            <strong>${r.document_title}</strong>
+            <span class="chunk-meta">chunk ${r.chunk_index}${r.doc_type ? ' · ' + r.doc_type : ''}${r.author ? ' · ' + r.author : ''}</span>
+          </div>
+          <div class="chunk-text">${r.text_preview}…</div>
+        </div>`).join('');
+  } catch(e) { el.innerHTML = `<em style="color:#c0392b">${e.message}</em>`; }
+}
+
 // ── Pipeline Inspector ──
 let _pipelineSource = null;
 
@@ -569,9 +712,36 @@ function _handlePipelineEvent(msg, container) {
     return;
   }
 
+  if (step === 'graph') {
+    if (status === 'running') {
+      _appendStep(container, 'pipe-step-graph', '3', 'Entity Graph Expansion', 'running',
+        '<span style="color:#888;font-size:.85rem">Finding top entities in retrieved chunks · searching for related chunks via entity links…</span>');
+    } else {
+      const entities = data.entities_used || [];
+      const entityBadges = entities.map(e => {
+        const bg = _TYPE_COLORS[e.type] || '#eee';
+        const col = _TYPE_TEXT[e.type] || '#333';
+        return `<span style="background:${bg};color:${col};padding:1px 7px;border-radius:10px;font-size:0.72rem;font-weight:600;margin-right:4px">${e.type}: ${e.name}</span>`;
+      }).join('');
+      const extras = (data.extra_chunks || []).map(c => `
+        <div class="pipe-chunk">
+          <div class="pipe-chunk-row">
+            <span class="search-badge" style="background:#f0e6ff;color:#6c3483;font-size:0.72rem;font-weight:600;padding:2px 7px;border-radius:10px">GRAPH</span>
+            <strong>${c.document_title}</strong> — chunk ${c.chunk_index}
+          </div>
+          <div class="pipe-chunk-text">${c.text_preview}</div>
+        </div>`).join('');
+      _updateStep('pipe-step-graph', 'done',
+        `<div class="pipe-stat">Entities found: ${entityBadges || '<em style="color:#aaa">none</em>'}</div>
+         <div class="pipe-stat">Added <strong>${data.extra_chunks_added}</strong> chunk(s) via entity links &nbsp;·&nbsp; pool now <strong>${data.total_pool}</strong> &nbsp;·&nbsp; <strong>${data.duration_ms}ms</strong></div>
+         ${extras ? `<div class="pipe-chunks">${extras}</div>` : ''}`);
+    }
+    return;
+  }
+
   if (step === 'reranking') {
     if (status === 'running') {
-      _appendStep(container, 'pipe-step-rr', '3', 'Cross-Encoder Re-ranking', 'running',
+      _appendStep(container, 'pipe-step-rr', '4', 'Cross-Encoder Re-ranking', 'running',
         '<span style="color:#888;font-size:.85rem">Scoring each (query, chunk) pair together — more precise than vector distance alone…</span>');
     } else {
       _updateStep('pipe-step-rr', 'done',
@@ -582,7 +752,7 @@ function _handlePipelineEvent(msg, container) {
   }
 
   if (step === 'context') {
-    _appendStep(container, 'pipe-step-ctx', '4', 'Context Assembly', 'done',
+    _appendStep(container, 'pipe-step-ctx', '5', 'Context Assembly', 'done',
       `<div class="pipe-stat"><strong>${data.chunk_count}</strong> chunks assembled &nbsp;·&nbsp; <strong>${data.word_count}</strong> words sent to LLM</div>
        <details><summary style="cursor:pointer;font-size:0.8rem;color:#666;margin-top:6px">Show exact context sent to Claude</summary>
          <pre class="pipe-ctx">${data.context_preview.replace(/</g,'&lt;')}</pre>
@@ -591,7 +761,7 @@ function _handlePipelineEvent(msg, container) {
   }
 
   if (step === 'llm' && status === 'running') {
-    _appendStep(container, 'pipe-step-llm', '5', 'LLM Answer Generation', 'running',
+    _appendStep(container, 'pipe-step-llm', '6', 'LLM Answer Generation', 'running',
       '<div class="pipe-answer" id="pipe-stream-target"></div>');
     return;
   }

@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     # Retrieval
     search_top_k: int = 6
 
+    # Entity graph expansion (applied after hybrid search, before re-ranking)
+    graph_enabled: bool = True
+    graph_extra_chunks: int = 3   # extra chunks pulled in via entity links
+
     # Re-ranking (cross-encoder applied after hybrid search)
     rerank_enabled: bool = True
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"

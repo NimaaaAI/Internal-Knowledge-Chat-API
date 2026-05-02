@@ -8,13 +8,14 @@ from app.auth import verify_api_key
 from app.database import get_db
 from app.llm import client as _client, SYSTEM_PROMPT, build_context as _build_context
 from app.schemas import ChatRequest, ChatResponse, SourceReference
-from app.routes.search import hybrid_search
+from app.routes.search import hybrid_search, graph_expand
 from app.reranker import rerank_chunks
 from app.config import settings
 
+# The router with auth
 router = APIRouter(dependencies=[Depends(verify_api_key)])
 
-
+# The endpoint declaration
 @router.post("/chat", response_model=ChatResponse)
 async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db)):
     candidate_k = settings.rerank_candidates if settings.rerank_enabled else settings.search_top_k
@@ -26,6 +27,9 @@ async def chat(payload: ChatRequest, db: AsyncSession = Depends(get_db)):
         author=payload.author,
         source=payload.source,
     )
+
+    if settings.graph_enabled and chunks:
+        chunks, _ = await graph_expand(db, chunks, extra_k=settings.graph_extra_chunks)
 
     if settings.rerank_enabled and len(chunks) > 1:
         chunks = await asyncio.to_thread(rerank_chunks, payload.question, chunks, settings.rerank_top_k)

@@ -15,7 +15,7 @@ from app.embeddings import embed_one
 from app.llm import client as _llm_client, SYSTEM_PROMPT, build_context
 from app.models import Chunk, Document
 from app.reranker import rerank_with_scores
-from app.routes.search import hybrid_search, _build_where
+from app.routes.search import hybrid_search, graph_expand, _build_where
 from app.schemas import ChunkDetail, DebugStats, TraceResponse, TraceResult
 
 router = APIRouter(prefix="/debug", dependencies=[Depends(verify_api_key)])
@@ -157,6 +157,72 @@ async def debug_trace(
     return TraceResponse(query=q, results=results)
 
 
+# ── Entity Graph ─────────────────────────────────────────────────────────────
+
+@router.get("/entities")
+async def debug_entities(
+    name: str = Query(default="", description="Partial name to search"),
+    type: str | None = Query(default=None, description="PERSON, ORGANIZATION, or PLACE"),
+    limit: int = Query(default=30, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search extracted entities across all chunks."""
+    conditions, params = [], {"limit": limit}
+    if name:
+        conditions.append("lower(e.name) LIKE :name_pat")
+        params["name_pat"] = f"%{name.lower()}%"
+    if type:
+        conditions.append("e.type = :type")
+        params["type"] = type
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    rows = (await db.execute(text(f"""
+        SELECT e.name, e.type, d.title AS document_title,
+               d.id AS document_id, c.id AS chunk_id, c.chunk_index,
+               left(c.text, 160) AS text_preview
+        FROM entities e
+        JOIN chunks c    ON c.id = e.chunk_id
+        JOIN documents d ON d.id = e.document_id
+        {where}
+        ORDER BY lower(e.name), d.title
+        LIMIT :limit
+    """), params)).mappings().all()
+
+    return [dict(r) for r in rows]
+
+
+@router.get("/cooccurrence")
+async def debug_cooccurrence(
+    name: list[str] = Query(..., description="Two or more entity names to find together"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Find chunks that mention ALL given entities — the core graph query.
+    Example: ?name=Jane+Smith&name=Nordic shows chunks where both appear.
+    """
+    if len(name) < 1:
+        return []
+    name_params = {f"n{i}": nm.lower() for i, nm in enumerate(name)}
+    name_in = ", ".join(f":n{i}" for i in range(len(name)))
+
+    rows = (await db.execute(text(f"""
+        SELECT c.id AS chunk_id, c.document_id, c.chunk_index,
+               left(c.text, 300) AS text_preview,
+               d.title AS document_title, d.doc_type, d.author
+        FROM chunks c
+        JOIN documents d ON d.id = c.document_id
+        WHERE c.id IN (
+            SELECT chunk_id FROM entities
+            WHERE lower(name) IN ({name_in})
+            GROUP BY chunk_id
+            HAVING COUNT(DISTINCT lower(name)) = :name_count
+        )
+        LIMIT 20
+    """), {**name_params, "name_count": len(name)})).mappings().all()
+
+    return [dict(r) for r in rows]
+
+
 # ── Pipeline Inspector ────────────────────────────────────────────────────────
 
 def _evt(data: dict) -> str:
@@ -202,7 +268,31 @@ async def _pipeline_stream(q: str, doc_type: str | None, author: str | None, db:
         yield "data: [DONE]\n\n"
         return
 
-    # Step 3 — re-ranking (only if enabled)
+    # Step 3 — graph expansion (only if enabled)
+    if settings.graph_enabled:
+        yield _evt({"step": "graph", "status": "running", "data": {}})
+        t0 = time.perf_counter()
+        expanded, top_entities = await graph_expand(db, candidates, extra_k=settings.graph_extra_chunks)
+        graph_ms = int((time.perf_counter() - t0) * 1000)
+        extra_count = len(expanded) - len(candidates)
+
+        yield _evt({"step": "graph", "status": "done", "data": {
+            "duration_ms": graph_ms,
+            "entities_used": top_entities,
+            "extra_chunks_added": extra_count,
+            "total_pool": len(expanded),
+            "extra_chunks": [
+                {
+                    "document_title": c.document_title,
+                    "chunk_index": c.chunk_index,
+                    "text_preview": c.text[:130] + ("…" if len(c.text) > 130 else ""),
+                }
+                for c in expanded[len(candidates):]
+            ],
+        }})
+        candidates = expanded
+
+    # Step 4 — re-ranking (only if enabled)
     if settings.rerank_enabled and len(candidates) > 1:
         yield _evt({"step": "reranking", "status": "running", "data": {}})
         t0 = time.perf_counter()

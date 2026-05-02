@@ -10,8 +10,8 @@ def chunk_text(text: str) -> list[str]:
     150 English words ≈ 210 wordpieces — safe headroom.
     30-word overlap prevents losing meaning at chunk boundaries.
     """
-    size = settings.chunk_words
-    overlap = settings.chunk_overlap_words
+    size = settings.chunk_words # 150 words per chunk
+    overlap = settings.chunk_overlap_words # 30 words overlap between chunks
 
     # Split on whitespace, keeping the separators so we can reconstruct spacing
     tokens = re.split(r"(\s+)", text.strip())

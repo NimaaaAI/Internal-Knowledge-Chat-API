@@ -139,6 +139,82 @@ async def hybrid_search(
     ]
 
 
+async def graph_expand(
+    db: AsyncSession,
+    base_chunks: list[ChunkResult],
+    extra_k: int = 3,
+) -> tuple[list[ChunkResult], list[dict]]:
+    """
+    Graph-based retrieval expansion.
+
+    Finds the most-mentioned entities across the already-retrieved chunks,
+    then fetches extra chunks from the DB that share those entities but
+    weren't in the original results. The re-ranker downstream sorts the
+    expanded pool by relevance — so graph expansion increases recall without
+    sacrificing precision.
+    """
+    if not base_chunks:
+        return base_chunks, []
+
+    # UUIDs contain only hex + dashes — safe to inline
+    chunk_id_list = "', '".join(str(c.chunk_id) for c in base_chunks)
+
+    entity_rows = (await db.execute(text(f"""
+        SELECT name, type, COUNT(*) AS freq
+        FROM entities
+        WHERE chunk_id IN ('{chunk_id_list}')
+        GROUP BY name, type
+        ORDER BY freq DESC
+        LIMIT 5
+    """))).mappings().all()
+
+    if not entity_rows:
+        return base_chunks, []
+
+    top_entities = [{"name": r["name"], "type": r["type"]} for r in entity_rows]
+
+    # Named params for entity names (user-controlled via Claude, must be parameterised)
+    name_params = {f"en{i}": r["name"].lower() for i, r in enumerate(entity_rows)}
+    name_in = ", ".join(f":en{i}" for i in range(len(entity_rows)))
+
+    extra_rows = (await db.execute(text(f"""
+        SELECT DISTINCT
+            c.id            AS chunk_id,
+            c.document_id,
+            c.chunk_index,
+            c.text,
+            d.title         AS document_title,
+            d.source        AS document_source,
+            d.author        AS document_author,
+            d.doc_type,
+            d.extra_metadata
+        FROM entities e
+        JOIN chunks c    ON c.id = e.chunk_id
+        JOIN documents d ON d.id = c.document_id
+        WHERE lower(e.name) IN ({name_in})
+          AND c.id NOT IN ('{chunk_id_list}')
+        LIMIT :limit
+    """), {**name_params, "limit": extra_k})).mappings().all()
+
+    extra_chunks = [
+        ChunkResult(
+            chunk_id=row["chunk_id"],
+            document_id=row["document_id"],
+            chunk_index=row["chunk_index"],
+            text=row["text"],
+            score=0.0,          # no RRF score — sourced from entity graph
+            document_title=row["document_title"],
+            document_source=row["document_source"],
+            document_author=row["document_author"],
+            doc_type=row["doc_type"],
+            extra_metadata=row["extra_metadata"] or {},
+        )
+        for row in extra_rows
+    ]
+
+    return base_chunks + extra_chunks, top_entities
+
+
 @router.get("/search", response_model=SearchResponse)
 async def search(
     q: str = Query(..., min_length=1, description="Natural-language search query"),

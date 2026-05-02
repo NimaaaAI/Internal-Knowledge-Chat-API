@@ -180,7 +180,10 @@
     <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-weight:normal">
       <input type="checkbox" id="search-rerank"> Re-rank results with cross-encoder
     </label>
-    <button onclick="doSearch()">Search</button>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button onclick="doSearch()" style="margin-top:0">Search</button>
+      <button onclick="clearSearch()" style="margin-top:0;background:#666">Clear</button>
+    </div>
   </div>
   <div id="search-results"></div>
 </div>
@@ -196,9 +199,10 @@
   </div>
   <div class="card" style="padding:12px">
     <div id="chat-box"><em style="color:#aaa">Ask a question about your documents...</em></div>
-    <div style="display:flex;gap:8px;margin-top:0">
+    <div style="display:flex;gap:8px;margin-top:8px">
       <input id="chat-input" type="text" placeholder="Type your question..." style="flex:1" onkeydown="if(event.key==='Enter')sendChat()">
       <button onclick="sendChat()" style="margin-top:0">Send</button>
+      <button onclick="clearChat()" style="margin-top:0;background:#666">New Chat</button>
     </div>
   </div>
 </div>
@@ -229,7 +233,10 @@
     <select id="int-doc-select" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:0.9rem;background:#fafafa">
       <option value="">Loading documents…</option>
     </select>
-    <button onclick="viewChunks()">View Chunks</button>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button onclick="viewChunks()" style="margin-top:0">View Chunks</button>
+      <button onclick="clearChunks()" style="margin-top:0;background:#666">Clear</button>
+    </div>
     <div id="int-chunks" style="margin-top:14px"></div>
   </div>
 
@@ -246,7 +253,10 @@
     <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-weight:normal">
       <input type="checkbox" id="int-trace-rerank"> Include cross-encoder re-ranking scores
     </label>
-    <button onclick="runTrace()">Trace Retrieval</button>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button onclick="runTrace()" style="margin-top:0">Trace Retrieval</button>
+      <button onclick="clearTrace()" style="margin-top:0;background:#666">Clear</button>
+    </div>
     <div id="int-trace-results" style="margin-top:14px"></div>
   </div>
 
@@ -265,6 +275,7 @@
         <option value="PLACE">Place</option>
       </select>
       <button onclick="searchEntities()" style="margin:0">Search</button>
+      <button onclick="clearEntities()" style="margin:0;background:#666">Clear</button>
     </div>
     <div id="ent-results" style="margin-top:12px"></div>
 
@@ -276,6 +287,7 @@
       <input id="cooc-a" type="text" placeholder="Entity A" style="flex:1" onkeydown="if(event.key==='Enter')findCooccurrence()">
       <input id="cooc-b" type="text" placeholder="Entity B" style="flex:1" onkeydown="if(event.key==='Enter')findCooccurrence()">
       <button onclick="findCooccurrence()" style="margin:0">Find</button>
+      <button onclick="clearCooccurrence()" style="margin:0;background:#666">Clear</button>
     </div>
     <div id="cooc-results" style="margin-top:12px"></div>
   </div>
@@ -288,7 +300,10 @@
     <input id="pipe-q" type="text" placeholder="e.g. What is the Nordic expansion strategy?" onkeydown="if(event.key==='Enter')runPipeline()">
     <label style="margin-top:12px">Filter: doc type (optional)</label>
     <input id="pipe-doctype" type="text">
-    <button onclick="runPipeline()" style="margin-top:14px">Run Pipeline</button>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button onclick="runPipeline()">Run Pipeline</button>
+      <button onclick="clearPipeline()" style="background:#666">Clear</button>
+    </div>
     <div id="pipe-steps" style="margin-top:20px"></div>
   </div>
 </div>
@@ -380,8 +395,14 @@ async function uploadText() {
   try {
     const r = await fetch('/text', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     const d = await r.json();
-    if (r.ok) msg('txt-msg', `✓ Uploaded "${d.title}" — ${d.chunks_created} chunk(s) created`, true);
-    else msg('txt-msg', d.detail || 'Upload failed', false);
+    if (r.ok) {
+      msg('txt-msg', `✓ Uploaded "${d.title}" — ${d.chunks_created} chunk(s) created`, true);
+      ['txt-text','txt-title','txt-author','txt-doctype','txt-source'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('txt-meta').value = '{}';
+      document.getElementById('txt-wordcount').textContent = '';
+    } else {
+      msg('txt-msg', d.detail || 'Upload failed', false);
+    }
   } catch(e) { msg('txt-msg', e.message, false); }
 }
 
@@ -399,8 +420,15 @@ async function uploadDoc() {
   try {
     const r = await fetch('/document', { method: 'POST', body: form });
     const d = await r.json();
-    if (r.ok) msg('doc-msg', `✓ Uploaded "${d.title}" — ${d.chunks_created} chunk(s) created`, true);
-    else msg('doc-msg', d.detail || 'Upload failed', false);
+    if (r.ok) {
+      msg('doc-msg', `✓ Uploaded "${d.title}" — ${d.chunks_created} chunk(s) created`, true);
+      document.getElementById('doc-file').value = '';
+      ['doc-title','doc-author','doc-doctype','doc-source'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('doc-meta').value = '{}';
+      document.getElementById('doc-preview-note').innerHTML = '';
+    } else {
+      msg('doc-msg', d.detail || 'Upload failed', false);
+    }
   } catch(e) { msg('doc-msg', e.message, false); }
 }
 
@@ -783,6 +811,50 @@ function _handlePipelineEvent(msg, container) {
     _appendStep(container, 'pipe-step-err', '!', 'Error', 'error',
       `<span style="color:#c0392b">${data.message}</span>`);
   }
+}
+
+function clearChat() {
+  document.getElementById('chat-box').innerHTML = '<em style="color:#aaa">Ask a question about your documents...</em>';
+  document.getElementById('chat-input').value = '';
+}
+
+function clearPipeline() {
+  if (_pipelineSource) { _pipelineSource.close(); _pipelineSource = null; }
+  document.getElementById('pipe-steps').innerHTML = '';
+  document.getElementById('pipe-q').value = '';
+}
+
+function clearSearch() {
+  document.getElementById('search-q').value = '';
+  document.getElementById('search-doctype').value = '';
+  document.getElementById('search-author').value = '';
+  document.getElementById('search-rerank').checked = false;
+  document.getElementById('search-results').innerHTML = '';
+}
+
+function clearChunks() {
+  document.getElementById('int-doc-select').value = '';
+  document.getElementById('int-chunks').innerHTML = '';
+}
+
+function clearTrace() {
+  document.getElementById('int-trace-q').value = '';
+  document.getElementById('int-trace-doctype').value = '';
+  document.getElementById('int-trace-topk').value = '8';
+  document.getElementById('int-trace-rerank').checked = false;
+  document.getElementById('int-trace-results').innerHTML = '';
+}
+
+function clearEntities() {
+  document.getElementById('ent-name').value = '';
+  document.getElementById('ent-type').value = '';
+  document.getElementById('ent-results').innerHTML = '';
+}
+
+function clearCooccurrence() {
+  document.getElementById('cooc-a').value = '';
+  document.getElementById('cooc-b').value = '';
+  document.getElementById('cooc-results').innerHTML = '';
 }
 
 // ── Chat ──

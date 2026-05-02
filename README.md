@@ -191,15 +191,22 @@ A dedicated vector database (Qdrant, Weaviate) requires running a second service
 
 If the chunks grew to tens of millions of chunks with sub-10 ms latency requirements, Qdrant would be the right call.
 
-### Chunk size: 150 words, 30-word overlap
+### Chunking strategy
 
-`all-MiniLM-L6-v2` has a hard limit of 256 wordpiece tokens. English text averages ~1.4 wordpieces per word, so 150 words ≈ 210 tokens — safely within the limit with headroom for subword-heavy content.
+`all-MiniLM-L6-v2` has a hard limit of 256 wordpiece tokens. English text averages ~1.4 wordpieces per word, so a 150-word ceiling keeps every chunk safely within the model's window with headroom for subword-heavy content.
 
-- Smaller chunks (50 words) carry too little context for the embedding to capture meaning reliably
-- Larger chunks (300+ words) risk silent truncation and produce imprecise source citations
-- 30-word overlap ensures that sentences spanning a chunk boundary are fully represented in at least one chunk
+The chunker is paragraph-aware and recursive rather than a fixed sliding window:
 
-If switching to a model with a larger context window such as `bge-large-en-v1.5` (512 tokens), chunk size would increase to ~350 words.
+1. **Split on paragraph boundaries** (`\n\n`) first. A paragraph that already fits within 150 words becomes one chunk — its natural boundaries are preserved.
+2. **Fall back to sentences** for any paragraph that exceeds 150 words. The paragraph is split on sentence-ending punctuation and sentences are accumulated until the limit is reached.
+3. **Overlap by carrying the last unit.** When a new chunk starts, the final paragraph or sentence from the previous chunk is included as the opening unit. This ensures that a thought split across a boundary is fully represented in at least one chunk.
+
+This produces semantically coherent chunks instead of cuts that land mid-sentence, which improves both embedding quality and the relevance of source citations returned to the user.
+
+**What was considered and not used:**
+
+- *LLM-based chunking* — Claude could read each document and decide where the natural topic boundaries are, producing semantically ideal chunks. The tradeoff is cost and latency: every upload would require one or more LLM calls just for chunking, before embedding and entity extraction. At the scale of a knowledge base this adds up quickly. The paragraph-aware strategy captures most of the benefit at zero API cost.
+- *Larger embedding model* — `bge-large-en-v1.5` (1024-dim, 512-token window) would improve retrieval quality for domain-specific language and allow chunks up to ~350 words. The tradeoff is memory and CPU time: the model is roughly 5× larger than `all-MiniLM-L6-v2`. The cross-encoder re-ranker compensates for much of the quality gap in practice, so the smaller model was kept as the pragmatic baseline.
 
 ### Retrieval pipeline
 

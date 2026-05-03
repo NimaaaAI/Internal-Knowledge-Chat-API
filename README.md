@@ -365,6 +365,6 @@ For Docker, rather than letting the AI generate a complete setup in one shot, I 
 **Where I trusted the AI fully:**
 - PyMuPDF PDF extraction (standard usage, no surprises)
 - Pydantic v2 schema patterns
-- The sliding-window chunking logic (correct on first attempt, verified with a manual word-count test)
+- The paragraph-aware recursive chunking logic (correct on first attempt, verified with a manual word-count test)
 - Docker Compose syntax for the pgvector image
 
